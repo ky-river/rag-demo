@@ -1,0 +1,7 @@
+[
+  {"message": "这个项目使用了哪些技术？", "expected_intent": "knowledge_qa"},
+  {"message": "我应该如何学习 LangGraph？", "expected_intent": "study_plan"},
+  {"message": "我的简历和这个岗位匹配吗？", "expected_intent": "resume_match"},
+  {"message": "请制定一个 RAG 学习路线", "expected_intent": "study_plan"},
+  {"message": "岗位要求哪些技能？", "expected_intent": "resume_match"}
+]

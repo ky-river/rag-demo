@@ -1,0 +1,112 @@
+[
+  {
+    "question": "这个项目的向量数据库是什么？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["Chroma", "向量数据库"]
+      }
+    ]
+  },
+  {
+    "question": "文档切分大小和重叠是多少？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["500", "50", "切分"]
+      }
+    ]
+  },
+  {
+    "question": "最多返回几个候选片段？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["Top K", "候选片段"]
+      }
+    ]
+  },
+  {
+    "question": "相关性阈值是多少？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["0.30", "相关性阈值"]
+      }
+    ]
+  },
+  {
+    "question": "上传文件大小限制是多少？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["10 MB", "上传限制"]
+      }
+    ]
+  },
+  {
+    "question": "多轮会话保存在哪里？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["SQLite", "会话存储"]
+      }
+    ]
+  },
+  {
+    "question": "Agent 如何选择工具并进入对应节点？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["模型选择工具", "条件边", "route"]
+      }
+    ]
+  },
+  {
+    "question": "没有可靠来源时系统怎么处理？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["直接拒答", "当前资料中没有找到答案"]
+      }
+    ]
+  },
+  {
+    "question": "当前支持 Markdown 或 Word 文件吗？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["仅解析 PDF", "仅接受 PDF", "不支持 Markdown"]
+      }
+    ]
+  },
+  {
+    "question": "简历匹配提示使用哪个工具？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["resume_match_guidance", "简历"]
+      }
+    ]
+  },
+  {
+    "question": "公司的年收入是多少？",
+    "expect_no_sources": true
+  },
+  {
+    "question": "公司一共有多少名员工？",
+    "expect_no_sources": true
+  },
+  {
+    "question": "2025 年的销售额是多少？",
+    "expect_no_sources": true
+  },
+  {
+    "question": "创始人的生日是哪一天？",
+    "expect_no_sources": true
+  },
+  {
+    "question": "公司的办公地址在哪里？",
+    "expect_no_sources": true
+  }
+]

@@ -1,0 +1,48 @@
+services:
+  backend:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      HF_HOME: /app/.cache/huggingface
+    volumes:
+      - ./data:/app/data
+      - ./chroma_db:/app/chroma_db
+      - ./sessions.sqlite3:/app/sessions.sqlite3
+      - ./.cache:/app/.cache
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    image: public.ecr.aws/docker/library/python:3.12-slim
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./frontend:/app/frontend:ro
+    command: python -m http.server 5501 --directory frontend --bind 0.0.0.0
+    ports:
+      - "5501:5501"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5501/', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy

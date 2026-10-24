@@ -1,0 +1,352 @@
+[
+  {
+    "category": "project",
+    "question": "这个项目的向量数据库是什么？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["Chroma", "向量数据库"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "文档切分大小和重叠是多少？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["500", "50", "切分"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "最多返回几个候选片段？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["Top K", "候选片段"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "相关性阈值是多少？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["0.30", "相关性阈值"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "上传文件大小限制是多少？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["10 MB", "上传限制"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "多轮会话保存在哪里？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["SQLite", "会话存储"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "Agent 如何选择工具并进入对应节点？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["模型选择工具", "条件边", "route"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "没有可靠来源时系统怎么处理？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["直接拒答", "当前资料中没有找到答案"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "当前支持 Markdown 或 Word 文件吗？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["仅解析 PDF", "仅接受 PDF", "不支持 Markdown"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "简历匹配提示使用哪个工具？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["resume_match_guidance", "简历"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "文本切分时相邻片段重叠多少字符？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["50", "重叠"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "Chroma 和 BM25 各返回多少个候选？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["12 / 12", "候选 Top K", "12 个候选"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "RRF 的 K 值和两路权重比例是什么？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["K=10, 1:3", "RRF"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "网页主入口使用哪个接口？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["/agent-graph", "POST /agent-graph"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "knowledge_search 工具负责什么？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["knowledge_search", "检索知识库"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "create_study_plan 会生成什么？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["create_study_plan", "4 周学习目标"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "答案会返回哪些来源信息？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["文件名", "页码", "引用片段"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "系统使用哪个 Embedding 模型？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["text-embedding-v3"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "生成答案使用哪个模型？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["qwen-plus"]
+      }
+    ]
+  },
+  {
+    "category": "project",
+    "question": "PDF 文本由哪个库提取？",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["pypdf", "PyPDFLoader"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人的求职方向是什么？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["RAG Agent 实习生", "AI 应用开发实习生", "求职方向"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人熟悉哪些编程语言和框架？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["Python", "FastAPI", "LangGraph"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人使用过哪些向量数据库和模型接口？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["Chroma", "通义千问", "OpenAI 兼容 API"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "知识库问答项目支持哪些基础流程？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["PDF 解析", "文本切分", "向量检索"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "上传后为什么要重建索引？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["避免同名文件重复累积", "自动重建索引"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "简历与岗位匹配 Agent 会输出什么？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["匹配度", "技能缺口", "预测面试题"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人准备了多少个基础评测问题？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["10 个问题", "基础评测集"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人了解哪些 RAG 评测指标？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["召回率", "答案准确率", "BM25"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人的教育经历是什么？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["华东理工大学", "计算机科学与技术"]
+      }
+    ]
+  },
+  {
+    "category": "resume",
+    "question": "候选人的自我评价提到能独立定位哪些问题？",
+    "expected_sources": [
+      {
+        "filename": "AI实习生_个人简历_测试.pdf",
+        "any_keywords": ["接口超时", "依赖", "向量库问题"]
+      }
+    ]
+  },
+  {
+    "category": "refusal",
+    "question": "公司的年收入是多少？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "公司一共有多少名员工？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "2025 年的销售额是多少？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "创始人的生日是哪一天？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "公司的办公地址在哪里？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "公司的 CEO 是谁？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "产品的保修期是多久？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "公司的股票代码是什么？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "公司是哪一天成立的？",
+    "expect_no_sources": true
+  },
+  {
+    "category": "refusal",
+    "question": "公司收到过多少客户投诉？",
+    "expect_no_sources": true
+  }
+]

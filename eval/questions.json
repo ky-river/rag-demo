@@ -1,0 +1,52 @@
+[
+  {
+    "question": "这个项目使用了哪些技术？",
+    "expected": "pypdf、LangChain、Chroma、FastAPI",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["Python 3.11", "LangChain", "Chroma", "FastAPI"]
+      }
+    ]
+  },
+  {
+    "question": "文档切分大小是多少？",
+    "expected": "500、50",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["500", "切分"]
+      }
+    ]
+  },
+  {
+    "question": "这个项目的向量数据库是什么？",
+    "expected": "Chroma",
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["Chroma", "向量数据库"]
+      }
+    ]
+  },
+  {
+    "question": "知识库中没有答案的问题应该怎么处理？",
+    "expected": "避免编造",
+    "expected_any": [
+      "当前资料中没有找到答案",
+      "无法从当前资料中找到答案",
+      "缺少可靠依据"
+    ],
+    "expected_sources": [
+      {
+        "filename": "rag_project_document.pdf",
+        "any_keywords": ["当前资料中没有找到答案", "直接拒答", "可靠拒答"]
+      }
+    ]
+  },
+  {
+    "question": "公司的年收入是多少？",
+    "expected": "当前资料中没有找到答案",
+    "expect_no_sources": true
+  }
+]

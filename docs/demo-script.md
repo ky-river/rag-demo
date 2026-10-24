@@ -1,0 +1,74 @@
+# Demo Script
+
+Target length: 2-3 minutes.
+
+## 1. Introduction (15 seconds)
+
+Show the project title and state the goal:
+
+> This is a RAG and LangGraph project for enterprise knowledge search and job
+> preparation. It supports grounded Q&A, source citations, resume matching,
+> study planning, and persistent multi-turn sessions.
+
+## 2. Knowledge Base Q&A (35 seconds)
+
+Ask:
+
+> 这个项目采用了哪些检索和重排技术？
+
+Show:
+
+- The answer
+- File names and page numbers in the sources
+- Retrieval method and hybrid score if available in the source details
+
+## 3. Reliable Refusal (25 seconds)
+
+Ask a question that is not covered by the knowledge base:
+
+> 公司今年的营业收入是多少？
+
+Show that the system refuses to answer and returns no unrelated sources.
+
+## 4. Resume and JD Matching (35 seconds)
+
+Upload a resume PDF and a job description PDF, then run the match.
+
+Show:
+
+- Match score
+- Matched skills
+- Skill gaps
+- Resume suggestions
+- Predicted interview questions
+
+## 5. Study Plan (20 seconds)
+
+Generate a study plan from the identified skill gaps.
+
+Show the four-week structure and one concrete deliverable per week.
+
+## 6. Engineering Evidence (25 seconds)
+
+Show:
+
+- `/health` returning `status: ok`
+- Both Docker containers reporting `healthy`
+- The GitHub Actions workflow
+- The evaluation summary in the README
+
+## 7. Architecture (15 seconds)
+
+Show `docs/architecture.md` and briefly explain:
+
+> PDF ingestion creates a Chroma vector index and a BM25 index. Retrieval fuses
+> both result sets with weighted RRF, optionally reranks them, and only calls
+> the generation model when the evidence passes the relevance threshold.
+
+## Recording Checklist
+
+- Use a clean browser window at 1280x720 or larger.
+- Do not expose API keys, personal documents, or terminal environment values.
+- Upload only synthetic documents.
+- Keep the video under three minutes.
+- Add the final video URL to the README.
