@@ -10,7 +10,6 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 \
 
 COPY app ./app
 COPY data ./data
-COPY chroma_db ./chroma_db
 COPY .env.example ./.env.example
 
 EXPOSE 8000
