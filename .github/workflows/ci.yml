@@ -13,7 +13,7 @@ jobs:
       OPENAI_BASE_URL: http://127.0.0.1:9/v1
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,10 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build application image
         run: |
           docker build \
+            --build-arg BASE_IMAGE=python:3.12-slim \
             --build-arg PIP_INDEX_URL=https://pypi.org/simple \
             -t rag-demo:ci .
