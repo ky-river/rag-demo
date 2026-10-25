@@ -11,6 +11,10 @@
     .score { font-size: 28px; font-weight: 700; color: #176b87; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .card { padding: 12px; background: #f5f9fa; border-radius: 6px; }
+    .sources { display: grid; gap: 8px; margin-top: 12px; }
+    .source { padding: 10px 12px; border: 1px solid #d8e2e6; border-radius: 6px; background: #f8fbfc; }
+    .source summary { cursor: pointer; font-weight: 600; }
+    .source p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
     @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
   </style>
   <script src="./config.js"></script>
@@ -25,6 +29,7 @@
     <button onclick="runAgent()">让 Agent 处理</button>
     <button onclick="clearAgentSession()">清空会话</button>
     <p id="agentResult"></p>
+    <div id="agentSources" class="sources"></div>
   </div>
 
   <textarea id="question" rows="5" cols="60"
@@ -75,10 +80,7 @@
 
       document.getElementById("answer").textContent = data.answer || data.error;
 
-      document.getElementById("sources").innerHTML =
-        (data.sources || []).map(source =>
-          `<p>第 ${source.page} 页：${source.content}</p>`
-        ).join("");
+      renderSources("sources", data.sources);
     }
     </script>
     <script>
@@ -142,6 +144,33 @@ function renderList(items) {
   return `<ul>${(items || []).map(item => `<li>${item}</li>`).join("")}</ul>`;
 }
 
+function escapeHtml(value) {
+  const element = document.createElement("div");
+  element.textContent = String(value ?? "");
+  return element.innerHTML;
+}
+
+function renderSources(elementId, sources) {
+  const container = document.getElementById(elementId);
+  const items = Array.isArray(sources) ? sources : [];
+  if (!items.length) {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = items.map((source, index) => {
+    const filename = escapeHtml(source.filename || "未知文件");
+    const page = Number(source.page);
+    const pageLabel = Number.isFinite(page) && page > 0 ? `第 ${page} 页` : "页码未知";
+    const content = escapeHtml(source.content || "");
+    return `
+      <details class="source"${index === 0 ? " open" : ""}>
+        <summary>${filename} · ${pageLabel}</summary>
+        <p>${content}</p>
+      </details>`;
+  }).join("");
+}
+
 async function runAgent() {
   const message = document.getElementById("agentMessage").value.trim();
   if (!message) {
@@ -151,6 +180,7 @@ async function runAgent() {
 
   const result = document.getElementById("agentResult");
   result.textContent = "Agent 正在判断任务类型...";
+  renderSources("agentSources", []);
   const sessionId = getSessionId();
 
   try {
@@ -164,6 +194,7 @@ async function runAgent() {
       localStorage.setItem("rag_agent_session_id", data.session_id);
     }
     result.textContent = data.answer || data.message || data.error || "处理完成";
+    renderSources("agentSources", data.sources);
   } catch (error) {
     result.textContent = "请求失败，请确认后端正在运行";
   }
