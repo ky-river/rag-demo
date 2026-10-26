@@ -81,7 +81,8 @@ docker compose ps
 
 `docker compose ps` 中后端和前端都应显示为 `healthy`。
 
-架构图和演示脚本分别位于 `docs/architecture.md` 与 `docs/demo-script.md`。
+架构图、演示脚本和本地运行手册分别位于 `docs/architecture.md`、
+`docs/demo-script.md` 与 `docs/runbook.md`。
 GitHub Actions 会在提交到 `main` 分支或创建 Pull Request 时运行离线测试，
 并使用 `pypi.org` 构建一次 Docker 镜像。
 
