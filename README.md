@@ -1,9 +1,45 @@
 # RAG + Agent 智能求职助手
 
-一个基于 Python、FastAPI、LangChain、LangGraph、Chroma、BM25 和通义千问
-OpenAI 兼容接口的 RAG + Agent 求职助手原型。
+[![CI](https://github.com/ky-river/rag-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/ky-river/rag-demo/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-REST%20API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-## 功能
+一个面向内部知识检索和求职准备的 RAG + Agent 可运行项目。系统支持带来源引用的
+文档问答、无依据问题拒答、简历与岗位 JD 匹配、技能缺口分析、学习计划生成和多轮
+会话。
+
+项目使用 FastAPI、LangGraph、Chroma、BM25 和通义千问 OpenAI 兼容接口，附带
+40 题检索评测、离线回归测试、Docker Compose 和 GitHub Actions。
+
+<p align="center">
+  <img src="docs/assets/dashboard.jpg" alt="RAG 求职工作台桌面端界面" width="960">
+</p>
+
+<p align="center">
+  <a href="docs/assets/mobile.jpg">查看移动端截图</a>
+</p>
+
+## 快速启动
+
+```bash
+git clone git@github.com:ky-river/rag-demo.git
+cd rag-demo
+cp .env.example .env
+```
+
+在 `.env` 中填写兼容 OpenAI 接口的模型配置，然后执行：
+
+```bash
+docker compose up -d --build
+docker compose ps
+curl -sS http://127.0.0.1:8000/health
+```
+
+浏览器打开 `http://127.0.0.1:5501`。完整的启动、验收、停止和排错步骤见
+[`docs/runbook.md`](docs/runbook.md)。
+
+## 核心能力
 
 - PDF 知识库问答
 - 上传 PDF 后自动解析、切分、向量化，并同步重建 BM25 索引
@@ -20,7 +56,7 @@ OpenAI 兼容接口的 RAG + Agent 求职助手原型。
 
 ## 技术栈
 
-- Python 3.14
+- Python 3.12+
 - FastAPI + Uvicorn
 - LangChain
 - LangGraph
@@ -32,6 +68,17 @@ OpenAI 兼容接口的 RAG + Agent 求职助手原型。
 - 通义千问 `qwen-plus`
 - 通义千问 `text-embedding-v3`
 - 原生 HTML/CSS/JavaScript
+
+## 项目结构
+
+```text
+app/                 FastAPI、Agent、检索、索引与模型调用
+frontend/            原生 HTML/CSS/JavaScript 工作台
+eval/                检索、回答、Agent、工具路由和异常测试
+tests/               不依赖外部模型的离线回归测试
+docs/                架构、演示脚本、运行手册与界面截图
+docker-compose.yml   前后端本地编排
+```
 
 ## 运行
 
