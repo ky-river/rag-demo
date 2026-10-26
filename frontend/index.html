@@ -2,300 +2,1788 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>RAG 知识库问答</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG 求职工作台</title>
   <style>
-    body { max-width: 980px; margin: 32px auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }
-    textarea { width: 100%; max-width: 680px; }
-    button { margin: 6px 4px 6px 0; padding: 6px 12px; cursor: pointer; }
-    .panel { margin: 20px 0; padding: 16px; border: 1px solid #ddd; border-radius: 8px; }
-    .score { font-size: 28px; font-weight: 700; color: #176b87; }
-    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .card { padding: 12px; background: #f5f9fa; border-radius: 6px; }
-    .sources { display: grid; gap: 8px; margin-top: 12px; }
-    .source { padding: 10px 12px; border: 1px solid #d8e2e6; border-radius: 6px; background: #f8fbfc; }
-    .source summary { cursor: pointer; font-weight: 600; }
-    .source p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+    :root {
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-muted: #f8fafb;
+      --border: #dde3e8;
+      --border-strong: #c8d1d8;
+      --text: #17212b;
+      --muted: #667586;
+      --accent: #0f6b68;
+      --accent-strong: #0a5552;
+      --accent-soft: #e7f2f1;
+      --blue-soft: #eaf0f8;
+      --warning: #a95c14;
+      --danger: #aa3131;
+      --success: #20734e;
+      --shadow: 0 12px 30px rgba(24, 38, 50, 0.06);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid rgba(15, 107, 104, 0.22);
+      outline-offset: 2px;
+    }
+
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 72px;
+      padding: 12px clamp(18px, 4vw, 40px);
+      color: #f7fbfc;
+      background: #17252f;
+      border-bottom: 1px solid #263a47;
+    }
+
+    .brand {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      color: #17252f;
+      background: #dceceb;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.25;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .brand p {
+      margin: 3px 0 0;
+      color: #aebdc8;
+      font-size: 12px;
+    }
+
+    .service-state {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 6px 12px;
+      color: #d8e5e8;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 999px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: #d39b4b;
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(211, 155, 75, 0.14);
+    }
+
+    .service-state.is-online .status-dot {
+      background: #65c996;
+      box-shadow: 0 0 0 3px rgba(101, 201, 150, 0.14);
+    }
+
+    .service-state.is-offline .status-dot {
+      background: #ef7d7d;
+      box-shadow: 0 0 0 3px rgba(239, 125, 125, 0.14);
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      min-height: calc(100vh - 72px);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 72px;
+      display: flex;
+      flex-direction: column;
+      align-self: start;
+      height: calc(100vh - 72px);
+      padding: 24px 16px 20px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+    }
+
+    .nav-label,
+    .eyebrow {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .nav-label {
+      padding: 0 10px 10px;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-item {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 10px;
+      width: 100%;
+      min-height: 58px;
+      padding: 9px 10px;
+      color: var(--text);
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+
+    .nav-item:hover {
+      background: var(--surface-muted);
+      border-color: var(--border);
+    }
+
+    .nav-item.is-active {
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      border-color: #c6dedc;
+    }
+
+    .nav-index {
+      padding-top: 1px;
+      color: #8794a0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .nav-item.is-active .nav-index {
+      color: var(--accent);
+    }
+
+    .nav-text {
+      display: block;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .nav-caption {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.35;
+    }
+
+    .sidebar-meta {
+      margin-top: auto;
+      padding: 14px 10px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .sidebar-meta strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    .sidebar-meta p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .workspace {
+      min-width: 0;
+      padding: clamp(24px, 4vw, 48px);
+    }
+
+    .page {
+      display: none;
+      width: min(1080px, 100%);
+      margin: 0 auto;
+    }
+
+    .page.is-active {
+      display: block;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    .page-header h2 {
+      margin: 5px 0 6px;
+      font-size: clamp(24px, 3vw, 32px);
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .page-header p:not(.eyebrow) {
+      max-width: 680px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .surface {
+      padding: clamp(18px, 3vw, 28px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    .field-label {
+      color: #344353;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .field-hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 132px;
+      padding: 12px 14px;
+      color: var(--text);
+      background: var(--surface-muted);
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      line-height: 1.6;
+      resize: vertical;
+    }
+
+    textarea::placeholder {
+      color: #8c99a6;
+    }
+
+    textarea:focus {
+      background: var(--surface);
+      border-color: var(--accent);
+    }
+
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 9px 15px;
+      color: #ffffff;
+      background: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .button:hover {
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+
+    .button:disabled {
+      cursor: wait;
+      opacity: 0.62;
+    }
+
+    .button.secondary {
+      color: #334353;
+      background: var(--surface);
+      border-color: var(--border-strong);
+    }
+
+    .button.secondary:hover {
+      background: var(--surface-muted);
+      border-color: #aebac4;
+    }
+
+    .button.ghost {
+      color: var(--accent-strong);
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .button.ghost:hover {
+      background: var(--accent-soft);
+    }
+
+    .answer-block {
+      margin-top: 24px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .section-heading h3 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .meta-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 9px;
+      color: #4f6271;
+      background: var(--blue-soft);
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .answer-content {
+      color: #263746;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .answer-content > :first-child {
+      margin-top: 0;
+    }
+
+    .answer-content > :last-child {
+      margin-bottom: 0;
+    }
+
+    .answer-content p {
+      margin: 0 0 10px;
+    }
+
+    .answer-content h1,
+    .answer-content h2,
+    .answer-content h3,
+    .answer-content h4 {
+      margin: 18px 0 8px;
+      color: var(--text);
+      line-height: 1.35;
+    }
+
+    .answer-content h1,
+    .answer-content h2 {
+      font-size: 18px;
+    }
+
+    .answer-content h3,
+    .answer-content h4 {
+      font-size: 16px;
+    }
+
+    .answer-content ul,
+    .answer-content ol {
+      margin: 8px 0 12px;
+      padding-left: 22px;
+    }
+
+    .answer-content li {
+      margin: 4px 0;
+    }
+
+    .answer-content code {
+      padding: 1px 5px;
+      color: #194f5b;
+      background: #edf3f5;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.92em;
+    }
+
+    .answer-content pre {
+      overflow-x: auto;
+      padding: 12px;
+      color: #d9e7ec;
+      background: #1c2b35;
+      border-radius: 6px;
+    }
+
+    .answer-content pre code {
+      padding: 0;
+      color: inherit;
+      background: transparent;
+    }
+
+    .answer-content.is-error {
+      color: var(--danger);
+    }
+
+    .empty-state {
+      display: grid;
+      min-height: 110px;
+      place-items: center;
+      padding: 20px;
+      color: var(--muted);
+      background: var(--surface-muted);
+      border: 1px dashed var(--border-strong);
+      border-radius: 6px;
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .sources {
+      display: grid;
+      gap: 9px;
+    }
+
+    .source {
+      overflow: hidden;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .source summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 42px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+      list-style: none;
+    }
+
+    .source summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .source summary::before {
+      flex: 0 0 auto;
+      color: var(--accent);
+      content: "+";
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 15px;
+    }
+
+    .source[open] summary::before {
+      content: "-";
+    }
+
+    .source-title {
+      min-width: 0;
+      margin-right: auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-meta {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .source p {
+      margin: 0;
+      padding: 0 12px 12px 39px;
+      color: #4a5b69;
+      font-size: 12px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .file-field {
+      display: grid;
+      gap: 10px;
+      min-width: 0;
+      padding: 18px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .file-field strong {
+      font-size: 13px;
+    }
+
+    .file-field p {
+      margin: -4px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .file-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input[type="file"]::file-selector-button {
+      min-height: 34px;
+      margin-right: 10px;
+      padding: 5px 11px;
+      color: #334353;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 5px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .file-name {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-name.has-file {
+      color: var(--accent-strong);
+      font-weight: 650;
+    }
+
+    .status-line {
+      min-height: 22px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-line.is-error {
+      color: var(--danger);
+    }
+
+    .result-layout {
+      margin-top: 24px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+    }
+
+    .score-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 8px 14px;
+      margin-bottom: 20px;
+    }
+
+    .score-value {
+      color: var(--accent-strong);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 42px;
+      font-weight: 760;
+      line-height: 1;
+    }
+
+    .score-label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 22px 28px;
+    }
+
+    .result-section {
+      min-width: 0;
+    }
+
+    .result-section h4 {
+      margin: 0 0 9px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .result-section ul {
+      margin: 0;
+      padding-left: 19px;
+      color: #3b4c5b;
+      font-size: 13px;
+    }
+
+    .result-section li {
+      margin: 5px 0;
+      overflow-wrap: anywhere;
+    }
+
+    .result-empty {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .study-plan {
+      margin-top: 26px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+    }
+
+    .plan-heading {
+      margin: 0 0 14px;
+      font-size: 15px;
+    }
+
+    .plan-weeks {
+      display: grid;
+      gap: 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .plan-week {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 18px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .plan-week-label {
+      color: var(--accent-strong);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .plan-week h5 {
+      margin: 0 0 6px;
+      font-size: 13px;
+    }
+
+    .plan-week ul {
+      margin: 0 0 8px;
+      padding-left: 19px;
+      color: #3b4c5b;
+      font-size: 12px;
+    }
+
+    .plan-deliverable {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 900px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 72px;
+        z-index: 15;
+        display: block;
+        height: auto;
+        padding: 10px 14px;
+        overflow-x: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .nav-label,
+      .sidebar-meta {
+        display: none;
+      }
+
+      .nav-list {
+        display: flex;
+        min-width: max-content;
+        gap: 6px;
+      }
+
+      .nav-item {
+        grid-template-columns: 24px auto;
+        width: auto;
+        min-height: 42px;
+        padding: 8px 11px;
+      }
+
+      .nav-caption {
+        display: none;
+      }
+
+      .workspace {
+        padding: 26px 18px 40px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .app-header {
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 16px;
+      }
+
+      .brand p {
+        display: none;
+      }
+
+      .sidebar {
+        overflow-x: visible;
+      }
+
+      .nav-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+        min-width: 0;
+      }
+
+      .nav-item {
+        width: 100%;
+      }
+
+      .service-state {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .page-header {
+        display: grid;
+        gap: 14px;
+      }
+
+      .page-header .button {
+        justify-self: start;
+      }
+
+      .upload-grid,
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .action-row .button,
+      .result-actions .button {
+        flex: 1 1 160px;
+      }
+
+      .plan-week {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+
+      .source summary {
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+
+      .source-meta {
+        width: 100%;
+        padding-left: 22px;
+      }
+
+      .source p {
+        padding-left: 12px;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .brand {
+        gap: 9px;
+      }
+
+      .brand-mark {
+        flex-basis: 32px;
+        width: 32px;
+        height: 32px;
+        font-size: 15px;
+      }
+
+      .brand h1 {
+        font-size: 16px;
+      }
+
+      .service-state {
+        max-width: 112px;
+        padding: 5px 9px;
+        font-size: 11px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+      }
+    }
   </style>
   <script src="./config.js"></script>
 </head>
 <body>
-  <h1>RAG 知识库问答</h1>
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">R</div>
+      <div class="brand-copy">
+        <h1>RAG 求职工作台</h1>
+        <p>知识检索 · Agent 路由 · 简历分析</p>
+      </div>
+    </div>
+    <div id="serviceState" class="service-state" role="status" aria-live="polite">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="serviceStateText">正在检查服务</span>
+    </div>
+  </header>
 
-  <div class="panel">
-    <h2>智能求职 Agent</h2>
-    <textarea id="agentMessage" rows="3" placeholder="例如：我应该如何学习 LangGraph？"></textarea>
-    <br>
-    <button onclick="runAgent()">让 Agent 处理</button>
-    <button onclick="clearAgentSession()">清空会话</button>
-    <p id="agentResult"></p>
-    <div id="agentSources" class="sources"></div>
+  <div class="shell">
+    <aside class="sidebar" aria-label="工作区导航">
+      <p class="nav-label">工作区</p>
+      <nav class="nav-list">
+        <button class="nav-item is-active" type="button" data-page="knowledge" aria-selected="true">
+          <span class="nav-index">01</span>
+          <span>
+            <span class="nav-text">知识库问答</span>
+            <span class="nav-caption">混合检索与来源引用</span>
+          </span>
+        </button>
+        <button class="nav-item" type="button" data-page="agent" aria-selected="false">
+          <span class="nav-index">02</span>
+          <span>
+            <span class="nav-text">求职 Agent</span>
+            <span class="nav-caption">任务判断与多轮会话</span>
+          </span>
+        </button>
+        <button class="nav-item" type="button" data-page="documents" aria-selected="false">
+          <span class="nav-index">03</span>
+          <span>
+            <span class="nav-text">文档管理</span>
+            <span class="nav-caption">上传并重建索引</span>
+          </span>
+        </button>
+        <button class="nav-item" type="button" data-page="match" aria-selected="false">
+          <span class="nav-index">04</span>
+          <span>
+            <span class="nav-text">简历匹配</span>
+            <span class="nav-caption">岗位分析与学习计划</span>
+          </span>
+        </button>
+      </nav>
+      <div class="sidebar-meta">
+        <strong id="indexSummary">索引状态读取中</strong>
+        <p id="indexDetail">正在连接 RAG API</p>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section id="page-knowledge" class="page is-active" aria-labelledby="knowledgeTitle">
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Knowledge retrieval</p>
+            <h2 id="knowledgeTitle">知识库问答</h2>
+            <p>从已入库文档中检索证据，并返回文件名、页码和引用片段。</p>
+          </div>
+          <button id="refreshHealth" class="button secondary" type="button">刷新状态</button>
+        </div>
+
+        <div class="surface">
+          <form id="askForm">
+            <label class="field">
+              <span class="field-label">问题</span>
+              <textarea id="question" rows="5" placeholder="例如：这个项目采用了哪些检索和重排技术？"></textarea>
+            </label>
+            <div class="action-row">
+              <button id="askButton" class="button" type="submit">检索并回答</button>
+              <button id="clearQuestion" class="button secondary" type="button">清空</button>
+            </div>
+          </form>
+
+          <div id="knowledgeEmpty" class="empty-state" style="margin-top: 24px;">
+            输入问题后，回答与来源会显示在这里。
+          </div>
+          <div id="knowledgeOutput" class="answer-block" hidden>
+            <div class="section-heading">
+              <h3>回答</h3>
+              <span id="knowledgeMeta" class="meta-chip">待检索</span>
+            </div>
+            <div id="answer" class="answer-content" aria-live="polite"></div>
+            <div class="section-heading" style="margin-top: 24px;">
+              <h3>引用来源</h3>
+              <span id="sourceCount" class="meta-chip">0 个片段</span>
+            </div>
+            <div id="sources" class="sources"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-agent" class="page" aria-labelledby="agentTitle" hidden>
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Agent routing</p>
+            <h2 id="agentTitle">求职 Agent</h2>
+            <p>根据任务自动选择知识检索、学习计划或简历匹配流程，并保留会话上下文。</p>
+          </div>
+        </div>
+
+        <div class="surface">
+          <form id="agentForm">
+            <label class="field">
+              <span class="field-label">任务</span>
+              <textarea id="agentMessage" rows="4" placeholder="例如：我应该如何学习 LangGraph？"></textarea>
+            </label>
+            <div class="action-row">
+              <button id="agentButton" class="button" type="submit">运行 Agent</button>
+              <button id="clearAgentSession" class="button secondary" type="button">清空会话</button>
+            </div>
+          </form>
+
+          <div id="agentEmpty" class="empty-state" style="margin-top: 24px;">
+            Agent 的执行结果和引用来源会显示在这里。
+          </div>
+          <div id="agentOutput" class="answer-block" hidden>
+            <div class="section-heading">
+              <h3>执行结果</h3>
+              <span id="agentRoute" class="meta-chip">等待任务</span>
+            </div>
+            <div id="agentResult" class="answer-content" aria-live="polite"></div>
+            <div class="section-heading" style="margin-top: 24px;">
+              <h3>引用来源</h3>
+              <span id="agentSourceCount" class="meta-chip">0 个片段</span>
+            </div>
+            <div id="agentSources" class="sources"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-documents" class="page" aria-labelledby="documentsTitle" hidden>
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Document ingestion</p>
+            <h2 id="documentsTitle">文档管理</h2>
+            <p>上传 PDF 后，系统会解析文本、重建 Chroma 与 BM25 索引。</p>
+          </div>
+          <button id="refreshHealthDocuments" class="button secondary" type="button">刷新状态</button>
+        </div>
+
+        <div class="surface">
+          <div class="file-field">
+            <strong>知识库 PDF</strong>
+            <p>仅支持可读取文字的 PDF，单个文件不能超过 10 MB。</p>
+            <div class="file-control">
+              <input id="pdfFile" type="file" accept=".pdf,application/pdf" aria-label="选择知识库 PDF">
+            </div>
+            <span id="pdfFileName" class="file-name">尚未选择文件</span>
+          </div>
+          <div class="action-row">
+            <button id="uploadButton" class="button" type="button">上传并建立索引</button>
+          </div>
+          <p id="uploadResult" class="status-line" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="page-match" class="page" aria-labelledby="matchTitle" hidden>
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Resume analysis</p>
+            <h2 id="matchTitle">简历与岗位匹配</h2>
+            <p>对比简历和岗位 JD，输出技能缺口、修改建议、预测面试题与学习计划。</p>
+          </div>
+        </div>
+
+        <div class="surface">
+          <form id="matchForm">
+            <div class="upload-grid">
+              <label class="file-field">
+                <strong>简历 PDF</strong>
+                <p>候选人技能与项目经历</p>
+                <span class="file-control">
+                  <input id="resumeFile" type="file" accept=".pdf,application/pdf">
+                </span>
+                <span id="resumeFileName" class="file-name">尚未选择文件</span>
+              </label>
+              <label class="file-field">
+                <strong>岗位 JD PDF</strong>
+                <p>岗位职责与任职要求</p>
+                <span class="file-control">
+                  <input id="jobFile" type="file" accept=".pdf,application/pdf">
+                </span>
+                <span id="jobFileName" class="file-name">尚未选择文件</span>
+              </label>
+            </div>
+            <div class="action-row">
+              <button id="matchButton" class="button" type="submit">开始匹配</button>
+            </div>
+          </form>
+          <p id="matchResult" class="status-line" aria-live="polite"></p>
+
+          <div id="matchDetails" class="result-layout" hidden>
+            <div class="score-row">
+              <span id="matchScore" class="score-value">--</span>
+              <span class="score-label">综合匹配度</span>
+            </div>
+            <div class="result-grid">
+              <section class="result-section">
+                <h4>匹配技能</h4>
+                <div id="matchedSkills"></div>
+              </section>
+              <section class="result-section">
+                <h4>技能缺口</h4>
+                <div id="skillGaps"></div>
+              </section>
+              <section class="result-section">
+                <h4>简历修改建议</h4>
+                <div id="resumeSuggestions"></div>
+              </section>
+              <section class="result-section">
+                <h4>预测面试题</h4>
+                <div id="interviewQuestions"></div>
+              </section>
+            </div>
+            <div class="result-actions">
+              <button id="createStudyPlan" class="button secondary" type="button">生成 4 周学习计划</button>
+              <button id="downloadReport" class="button secondary" type="button">下载匹配报告</button>
+            </div>
+          </div>
+
+          <section id="studyPlan" class="study-plan" hidden>
+            <h3 id="studyPlanGoal" class="plan-heading">4 周学习计划</h3>
+            <div id="studyPlanWeeks" class="plan-weeks"></div>
+          </section>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <textarea id="question" rows="5" cols="60"
-    placeholder="请输入问题"></textarea>
-  <br>
-  <button onclick="ask()">提问</button>
-
-
-<input type="file" id="pdfFile" accept=".pdf">
-<button onclick="uploadPdf()">上传 PDF</button>
-<p id="uploadResult"></p>
-
-  <h2>简历与岗位匹配</h2>
-  <p>简历 PDF：</p>
-  <input type="file" id="resumeFile" accept=".pdf">
-  <p>岗位 JD PDF：</p>
-  <input type="file" id="jobFile" accept=".pdf">
-  <button onclick="matchResume()">开始匹配</button>
-  <p id="matchResult"></p>
-  <div id="matchDetails"></div>
-
-  <h2>回答</h2>
-  <pre id="answer"></pre>
-
-  <h2>来源</h2>
-  <div id="sources"></div>
-
   <script>
-    async function ask() {
-      const question = document.getElementById("question").value.trim();
+    const state = {
+      latestAnalysis: null,
+      latestStudyPlan: null,
+      latestGaps: [],
+      agentSessionId: null,
+    };
 
+    const pageMeta = {
+      knowledge: ["Knowledge retrieval", "知识库问答"],
+      agent: ["Agent routing", "求职 Agent"],
+      documents: ["Document ingestion", "文档管理"],
+      match: ["Resume analysis", "简历与岗位匹配"],
+    };
+
+    const elements = {};
+
+    document.addEventListener("DOMContentLoaded", () => {
+      cacheElements();
+      bindNavigation();
+      bindActions();
+      bindFileInputs();
+      refreshHealth();
+    });
+
+    function cacheElements() {
+      [
+        "serviceState",
+        "serviceStateText",
+        "indexSummary",
+        "indexDetail",
+        "askForm",
+        "askButton",
+        "question",
+        "clearQuestion",
+        "knowledgeEmpty",
+        "knowledgeOutput",
+        "knowledgeMeta",
+        "answer",
+        "sourceCount",
+        "sources",
+        "agentForm",
+        "agentButton",
+        "agentMessage",
+        "clearAgentSession",
+        "agentEmpty",
+        "agentOutput",
+        "agentRoute",
+        "agentResult",
+        "agentSourceCount",
+        "agentSources",
+        "pdfFile",
+        "pdfFileName",
+        "uploadButton",
+        "uploadResult",
+        "matchForm",
+        "resumeFile",
+        "jobFile",
+        "resumeFileName",
+        "jobFileName",
+        "matchButton",
+        "matchResult",
+        "matchDetails",
+        "matchScore",
+        "matchedSkills",
+        "skillGaps",
+        "resumeSuggestions",
+        "interviewQuestions",
+        "createStudyPlan",
+        "downloadReport",
+        "studyPlan",
+        "studyPlanGoal",
+        "studyPlanWeeks",
+      ].forEach((id) => {
+        elements[id] = document.getElementById(id);
+      });
+    }
+
+    function bindNavigation() {
+      const navItems = [...document.querySelectorAll(".nav-item")];
+      navItems.forEach((item) => {
+        item.addEventListener("click", () => activatePage(item.dataset.page, navItems));
+      });
+    }
+
+    function activatePage(pageName, navItems) {
+      navItems.forEach((item) => {
+        const isActive = item.dataset.page === pageName;
+        item.classList.toggle("is-active", isActive);
+        item.setAttribute("aria-selected", String(isActive));
+      });
+
+      Object.keys(pageMeta).forEach((name) => {
+        const page = document.getElementById(`page-${name}`);
+        const isActive = name === pageName;
+        page.classList.toggle("is-active", isActive);
+        page.hidden = !isActive;
+      });
+
+      document.title = `${pageMeta[pageName][1]} | RAG 求职工作台`;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function bindActions() {
+      elements.askForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        askKnowledgeBase();
+      });
+      elements.clearQuestion.addEventListener("click", () => {
+        elements.question.value = "";
+        elements.knowledgeEmpty.hidden = false;
+        elements.knowledgeOutput.hidden = true;
+        elements.question.focus();
+      });
+
+      elements.agentForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        runAgent();
+      });
+      elements.clearAgentSession.addEventListener("click", clearAgentSession);
+
+      elements.uploadButton.addEventListener("click", uploadPdf);
+      elements.matchForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        matchResume();
+      });
+      elements.createStudyPlan.addEventListener("click", createStudyPlan);
+      elements.downloadReport.addEventListener("click", downloadReport);
+
+      document.getElementById("refreshHealth").addEventListener("click", refreshHealth);
+      document.getElementById("refreshHealthDocuments").addEventListener("click", refreshHealth);
+    }
+
+    function bindFileInputs() {
+      bindFileInput("pdfFile", "pdfFileName");
+      bindFileInput("resumeFile", "resumeFileName");
+      bindFileInput("jobFile", "jobFileName");
+    }
+
+    function bindFileInput(inputId, labelId) {
+      const input = document.getElementById(inputId);
+      const label = document.getElementById(labelId);
+      input.addEventListener("change", () => {
+        const file = input.files[0];
+        label.textContent = file ? file.name : "尚未选择文件";
+        label.classList.toggle("has-file", Boolean(file));
+      });
+    }
+
+    async function requestJson(path, options = {}) {
+      const response = await fetch(`${window.getRagApiBaseUrl()}${path}`, options);
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (error) {
+        data = {};
+      }
+      if (!response.ok || data.error) {
+        throw new Error(data.error || data.message || `请求失败 (${response.status})`);
+      }
+      return data;
+    }
+
+    async function refreshHealth() {
+      elements.serviceState.classList.remove("is-online", "is-offline");
+      elements.serviceStateText.textContent = "正在检查服务";
+      elements.indexSummary.textContent = "索引状态读取中";
+      elements.indexDetail.textContent = "正在连接 RAG API";
+
+      try {
+        const data = await requestJson("/health", { cache: "no-store" });
+        const isReady = Boolean(data.index_ready);
+        elements.serviceState.classList.add(isReady ? "is-online" : "is-offline");
+        elements.serviceStateText.textContent = isReady ? "服务与索引正常" : "索引暂不可用";
+        elements.indexSummary.textContent = `${numberOrZero(data.document_count)} 个文档`;
+        elements.indexDetail.textContent =
+          `${numberOrZero(data.chunk_count)} 个片段 · 版本 ${data.version || "-"}`;
+      } catch (error) {
+        elements.serviceState.classList.add("is-offline");
+        elements.serviceStateText.textContent = "服务未连接";
+        elements.indexSummary.textContent = "API 连接失败";
+        elements.indexDetail.textContent = "请确认 Docker 与后端服务正在运行";
+      }
+    }
+
+    async function askKnowledgeBase() {
+      const question = elements.question.value.trim();
       if (!question) {
-        alert("请输入问题");
+        elements.question.focus();
         return;
       }
 
-      document.getElementById("answer").textContent = "正在回答...";
+      elements.knowledgeEmpty.hidden = true;
+      elements.knowledgeOutput.hidden = false;
+      elements.answer.className = "answer-content";
+      setLoading(elements.askButton, true, "检索中...");
+      elements.knowledgeMeta.textContent = "正在检索";
+      elements.answer.textContent = "正在检索知识库并生成回答...";
+      elements.sources.replaceChildren();
+      elements.sourceCount.textContent = "0 个片段";
 
-      const response = await fetch(`${window.getRagApiBaseUrl()}/ask`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ question })
-      });
-
-      const data = await response.json();
-
-      document.getElementById("answer").textContent = data.answer || data.error;
-
-      renderSources("sources", data.sources);
+      try {
+        const data = await requestJson("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        elements.answer.innerHTML = renderMarkdown(data.answer || "没有返回答案");
+        elements.knowledgeMeta.textContent = "已完成";
+        renderSources("sources", data.sources);
+        elements.sourceCount.textContent = `${Array.isArray(data.sources) ? data.sources.length : 0} 个片段`;
+      } catch (error) {
+        showError(elements.answer, error);
+        elements.knowledgeMeta.textContent = "请求失败";
+      } finally {
+        setLoading(elements.askButton, false);
+      }
     }
-    </script>
-    <script>
-async function uploadPdf() {
-  const file = document.getElementById("pdfFile").files[0];
 
-  if (!file) {
-    alert("请选择 PDF 文件");
-    return;
-  }
+    async function runAgent() {
+      const message = elements.agentMessage.value.trim();
+      if (!message) {
+        elements.agentMessage.focus();
+        return;
+      }
 
-  document.getElementById("uploadResult").textContent = "正在上传并建立索引...";
+      elements.agentEmpty.hidden = true;
+      elements.agentOutput.hidden = false;
+      elements.agentResult.className = "answer-content";
+      setLoading(elements.agentButton, true, "Agent 执行中...");
+      elements.agentRoute.textContent = "正在判断任务";
+      elements.agentResult.textContent = "Agent 正在判断任务类型并执行...";
+      elements.agentSources.replaceChildren();
+      elements.agentSourceCount.textContent = "0 个片段";
 
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const response = await fetch(`${window.getRagApiBaseUrl()}/upload`, {
-    method: "POST",
-    body: formData
-  });
-
-  const data = await response.json();
-
-  document.getElementById("uploadResult").textContent =
-    data.message || data.error || "上传失败";
-}
-
-async function matchResume() {
-  const resume = document.getElementById("resumeFile").files[0];
-  const job = document.getElementById("jobFile").files[0];
-
-  if (!resume || !job) {
-    alert("请同时选择简历 PDF 和岗位 JD PDF");
-    return;
-  }
-
-  document.getElementById("matchResult").textContent = "正在分析匹配度...";
-
-  const formData = new FormData();
-  formData.append("resume", resume);
-  formData.append("job_description", job);
-
-  try {
-    const response = await fetch(`${window.getRagApiBaseUrl()}/match`, {
-      method: "POST",
-      body: formData
-    });
-    const data = await response.json();
-    if (data.error) {
-      document.getElementById("matchResult").textContent = data.error;
-      return;
+      try {
+        const data = await requestJson("/agent-graph", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message,
+            session_id: state.agentSessionId || getSessionId(),
+          }),
+        });
+        if (data.session_id) {
+          state.agentSessionId = data.session_id;
+          localStorage.setItem("rag_agent_session_id", data.session_id);
+        }
+        elements.agentRoute.textContent = routeLabel(data);
+        elements.agentResult.innerHTML = renderMarkdown(
+          data.answer || data.message || "Agent 已完成任务",
+        );
+        renderSources("agentSources", data.sources);
+        elements.agentSourceCount.textContent =
+          `${Array.isArray(data.sources) ? data.sources.length : 0} 个片段`;
+      } catch (error) {
+        showError(elements.agentResult, error);
+        elements.agentRoute.textContent = "执行失败";
+      } finally {
+        setLoading(elements.agentButton, false);
+      }
     }
-    renderMatch(data.analysis);
-  } catch (error) {
-    document.getElementById("matchResult").textContent =
-      "请求失败，请确认后端正在运行";
-  }
-}
 
-function renderList(items) {
-  return `<ul>${(items || []).map(item => `<li>${item}</li>`).join("")}</ul>`;
-}
-
-function escapeHtml(value) {
-  const element = document.createElement("div");
-  element.textContent = String(value ?? "");
-  return element.innerHTML;
-}
-
-function renderSources(elementId, sources) {
-  const container = document.getElementById(elementId);
-  const items = Array.isArray(sources) ? sources : [];
-  if (!items.length) {
-    container.innerHTML = "";
-    return;
-  }
-
-  container.innerHTML = items.map((source, index) => {
-    const filename = escapeHtml(source.filename || "未知文件");
-    const page = Number(source.page);
-    const pageLabel = Number.isFinite(page) && page > 0 ? `第 ${page} 页` : "页码未知";
-    const content = escapeHtml(source.content || "");
-    return `
-      <details class="source"${index === 0 ? " open" : ""}>
-        <summary>${filename} · ${pageLabel}</summary>
-        <p>${content}</p>
-      </details>`;
-  }).join("");
-}
-
-async function runAgent() {
-  const message = document.getElementById("agentMessage").value.trim();
-  if (!message) {
-    alert("请输入任务");
-    return;
-  }
-
-  const result = document.getElementById("agentResult");
-  result.textContent = "Agent 正在判断任务类型...";
-  renderSources("agentSources", []);
-  const sessionId = getSessionId();
-
-  try {
-    const response = await fetch(`${window.getRagApiBaseUrl()}/agent-graph`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, session_id: sessionId })
-    });
-    const data = await response.json();
-    if (data.session_id) {
-      localStorage.setItem("rag_agent_session_id", data.session_id);
+    async function clearAgentSession() {
+      elements.clearAgentSession.disabled = true;
+      try {
+        const sessionId = state.agentSessionId || getSessionId();
+        await requestJson("/agent/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+        elements.agentMessage.value = "";
+        elements.agentOutput.hidden = true;
+        elements.agentEmpty.hidden = false;
+        elements.agentEmpty.textContent = "会话已清空，可以开始新的任务。";
+        elements.agentRoute.textContent = "等待任务";
+      } catch (error) {
+        elements.agentEmpty.hidden = false;
+        elements.agentOutput.hidden = true;
+        elements.agentEmpty.textContent = "清空会话失败，请确认后端服务正在运行。";
+      } finally {
+        elements.clearAgentSession.disabled = false;
+      }
     }
-    result.textContent = data.answer || data.message || data.error || "处理完成";
-    renderSources("agentSources", data.sources);
-  } catch (error) {
-    result.textContent = "请求失败，请确认后端正在运行";
-  }
-}
 
-function getSessionId() {
-  let sessionId = localStorage.getItem("rag_agent_session_id");
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    localStorage.setItem("rag_agent_session_id", sessionId);
-  }
-  return sessionId;
-}
+    async function uploadPdf() {
+      const file = elements.pdfFile.files[0];
+      if (!file) {
+        showStatus(elements.uploadResult, "请选择 PDF 文件", true);
+        elements.pdfFile.focus();
+        return;
+      }
 
-async function clearAgentSession() {
-  const sessionId = getSessionId();
-  await fetch(`${window.getRagApiBaseUrl()}/agent/clear`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId })
-  });
-  document.getElementById("agentMessage").value = "";
-  document.getElementById("agentResult").textContent = "会话已清空";
-}
+      const formData = new FormData();
+      formData.append("file", file);
+      setLoading(elements.uploadButton, true, "正在建立索引...");
+      showStatus(elements.uploadResult, "正在解析文档并重建索引...");
 
-let latestAnalysis = null;
-let latestStudyPlan = null;
-
-function renderMatch(analysis) {
-  latestAnalysis = analysis;
-  latestStudyPlan = null;
-  document.getElementById("matchResult").textContent = "匹配分析完成";
-  document.getElementById("matchDetails").innerHTML = `
-    <div class="panel">
-      <div>综合匹配度</div>
-      <div class="score">${analysis.match_score ?? "-"}%</div>
-      <div class="grid">
-        <div class="card"><strong>匹配技能</strong>${renderList(analysis.matched_skills)}</div>
-        <div class="card"><strong>技能缺口</strong>${renderList(analysis.skill_gaps)}</div>
-        <div class="card"><strong>简历修改建议</strong>${renderList(analysis.resume_suggestions)}</div>
-        <div class="card"><strong>预测面试题</strong>${renderList(analysis.interview_questions)}</div>
-      </div>
-      <button onclick='createStudyPlan(${JSON.stringify(analysis.skill_gaps || [])})'>根据技能缺口生成学习计划</button>
-      <button onclick="downloadReport()">下载匹配报告</button>
-    </div>`;
-}
-
-async function createStudyPlan(gaps) {
-  document.getElementById("matchResult").textContent = "正在生成 4 周学习计划...";
-  const response = await fetch(`${window.getRagApiBaseUrl()}/study-plan`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ gaps })
-  });
-  const data = await response.json();
-  const plan = data.plan;
-  if (data.error || plan.raw_plan) {
-    document.getElementById("matchResult").textContent = data.error || plan.raw_plan;
-    return;
-  }
-  latestStudyPlan = plan;
-  document.getElementById("matchResult").textContent = plan.goal || "学习计划已生成";
-  document.getElementById("matchDetails").insertAdjacentHTML("beforeend", `
-    <div class="panel"><h3>4 周学习计划</h3>${(plan.weeks || []).map(week =>
-      `<div class="card"><strong>第 ${week.week} 周：${week.focus}</strong>${renderList(week.tasks)}<p>交付物：${week.deliverable}</p></div>`
-    ).join("")}</div>`);
-}
-
-function downloadReport() {
-  if (!latestAnalysis) {
-    alert("请先完成一次简历与岗位匹配");
-    return;
-  }
-
-  const list = (items) => (items || []).map(item => `- ${item}`).join("\n");
-  let report = `简历与岗位匹配报告\n`;
-  report += `生成日期：${new Date().toLocaleString("zh-CN")}\n\n`;
-  report += `综合匹配度：${latestAnalysis.match_score ?? "-"}%\n\n`;
-  report += `匹配技能：\n${list(latestAnalysis.matched_skills)}\n\n`;
-  report += `技能缺口：\n${list(latestAnalysis.skill_gaps)}\n\n`;
-  report += `简历修改建议：\n${list(latestAnalysis.resume_suggestions)}\n\n`;
-  report += `预测面试题：\n${list(latestAnalysis.interview_questions)}\n`;
-
-  if (latestStudyPlan) {
-    report += `\n学习计划：${latestStudyPlan.goal || ""}\n`;
-    for (const week of latestStudyPlan.weeks || []) {
-      report += `\n第 ${week.week} 周：${week.focus}\n`;
-      report += `${list(week.tasks)}\n`;
-      report += `交付物：${week.deliverable || ""}\n`;
+      try {
+        const data = await requestJson("/upload", {
+          method: "POST",
+          body: formData,
+        });
+        showStatus(elements.uploadResult, data.message || "文档上传成功");
+        await refreshHealth();
+      } catch (error) {
+        showStatus(elements.uploadResult, error.message, true);
+      } finally {
+        setLoading(elements.uploadButton, false);
+      }
     }
-  }
 
-  const blob = new Blob(["\uFEFF" + report], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "简历岗位匹配报告.txt";
-  link.click();
-  URL.revokeObjectURL(url);
-}
+    async function matchResume() {
+      const resume = elements.resumeFile.files[0];
+      const job = elements.jobFile.files[0];
+      if (!resume || !job) {
+        showStatus(elements.matchResult, "请同时选择简历 PDF 和岗位 JD PDF", true);
+        (!resume ? elements.resumeFile : elements.jobFile).focus();
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("resume", resume);
+      formData.append("job_description", job);
+      setLoading(elements.matchButton, true, "正在分析...");
+      showStatus(elements.matchResult, "正在分析匹配度并生成建议...");
+      elements.matchDetails.hidden = true;
+      elements.studyPlan.hidden = true;
+
+      try {
+        const data = await requestJson("/match", {
+          method: "POST",
+          body: formData,
+        });
+        renderMatch(data.analysis || {});
+      } catch (error) {
+        showStatus(elements.matchResult, error.message, true);
+      } finally {
+        setLoading(elements.matchButton, false);
+      }
+    }
+
+    function renderMatch(analysis) {
+      state.latestAnalysis = analysis;
+      state.latestStudyPlan = null;
+      state.latestGaps = asStringArray(analysis.skill_gaps);
+
+      const rawScore = Number(analysis.match_score);
+      const score = Number.isFinite(rawScore)
+        ? Math.min(100, Math.max(0, Math.round(rawScore)))
+        : null;
+      elements.matchScore.textContent = score === null ? "--" : String(score);
+      renderList("matchedSkills", analysis.matched_skills);
+      renderList("skillGaps", analysis.skill_gaps);
+      renderList("resumeSuggestions", analysis.resume_suggestions);
+      renderList("interviewQuestions", analysis.interview_questions);
+
+      elements.matchDetails.hidden = false;
+      elements.createStudyPlan.disabled = state.latestGaps.length === 0;
+      showStatus(elements.matchResult, "匹配分析完成");
+    }
+
+    async function createStudyPlan() {
+      if (!state.latestGaps.length) {
+        showStatus(elements.matchResult, "当前没有可用于制定计划的技能缺口", true);
+        return;
+      }
+
+      setLoading(elements.createStudyPlan, true, "正在生成计划...");
+      try {
+        const data = await requestJson("/study-plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gaps: state.latestGaps }),
+        });
+        const plan = data.plan || {};
+        if (plan.raw_plan) {
+          throw new Error(plan.raw_plan);
+        }
+        state.latestStudyPlan = plan;
+        renderStudyPlan(plan);
+        showStatus(elements.matchResult, "学习计划已生成");
+      } catch (error) {
+        showStatus(elements.matchResult, error.message, true);
+      } finally {
+        setLoading(elements.createStudyPlan, false);
+      }
+    }
+
+    function renderStudyPlan(plan) {
+      elements.studyPlanGoal.textContent = plan.goal || "4 周学习计划";
+      const weeks = Array.isArray(plan.weeks) ? plan.weeks : [];
+      elements.studyPlanWeeks.innerHTML = weeks.map((week, index) => {
+        const weekNumber = Number(week.week);
+        const label = Number.isFinite(weekNumber) ? weekNumber : index + 1;
+        return `
+          <article class="plan-week">
+            <div class="plan-week-label">WEEK ${label}</div>
+            <div>
+              <h5>${escapeHtml(week.focus || "本周重点")}</h5>
+              ${renderListMarkup(week.tasks, "暂无任务")}
+              <p class="plan-deliverable">交付物：${escapeHtml(week.deliverable || "未提供")}</p>
+            </div>
+          </article>`;
+      }).join("");
+      elements.studyPlan.hidden = weeks.length === 0;
+    }
+
+    function renderList(elementId, items) {
+      const container = document.getElementById(elementId);
+      container.innerHTML = renderListMarkup(items, "暂无内容");
+    }
+
+    function renderListMarkup(items, emptyText) {
+      const values = asStringArray(items);
+      if (!values.length) {
+        return `<p class="result-empty">${escapeHtml(emptyText)}</p>`;
+      }
+      return `<ul>${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+    }
+
+    function renderSources(elementId, sources) {
+      const container = document.getElementById(elementId);
+      const items = Array.isArray(sources) ? sources : [];
+      if (!items.length) {
+        container.innerHTML = `<p class="result-empty">没有返回引用片段。</p>`;
+        return;
+      }
+
+      container.innerHTML = items.map((source, index) => {
+        const filename = escapeHtml(source.filename || "未知文件");
+        const page = Number(source.page);
+        const pageLabel = Number.isFinite(page) && page > 0 ? `第 ${page} 页` : "页码未知";
+        const content = escapeHtml(source.content || "");
+        const method = source.method ? escapeHtml(source.method) : "";
+        const score = Number(source.score);
+        const scoreLabel = Number.isFinite(score) ? score.toFixed(3) : "";
+        const meta = [method, scoreLabel].filter(Boolean).join(" · ");
+        return `
+          <details class="source"${index === 0 ? " open" : ""}>
+            <summary>
+              <span class="source-title">${filename} · ${pageLabel}</span>
+              <span class="source-meta">${meta}</span>
+            </summary>
+            <p>${content}</p>
+          </details>`;
+      }).join("");
+    }
+
+    function renderMarkdown(value) {
+      const escaped = escapeHtml(value);
+      const lines = escaped.split(/\r?\n/);
+      const output = [];
+      let listType = "";
+      let inCodeBlock = false;
+      let codeLines = [];
+
+      const closeList = () => {
+        if (listType) {
+          output.push(`</${listType}>`);
+          listType = "";
+        }
+      };
+
+      const openList = (type) => {
+        if (listType !== type) {
+          closeList();
+          output.push(`<${type}>`);
+          listType = type;
+        }
+      };
+
+      for (const line of lines) {
+        if (line.startsWith("```")) {
+          closeList();
+          if (inCodeBlock) {
+            output.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+            codeLines = [];
+            inCodeBlock = false;
+          } else {
+            inCodeBlock = true;
+          }
+          continue;
+        }
+
+        if (inCodeBlock) {
+          codeLines.push(line);
+          continue;
+        }
+
+        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+          closeList();
+          const level = Math.min(4, Math.max(2, heading[1].length));
+          output.push(`<h${level}>${formatInline(heading[2])}</h${level}>`);
+          continue;
+        }
+
+        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+        if (bullet) {
+          openList("ul");
+          output.push(`<li>${formatInline(bullet[1])}</li>`);
+          continue;
+        }
+
+        const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+        if (numbered) {
+          openList("ol");
+          output.push(`<li>${formatInline(numbered[1])}</li>`);
+          continue;
+        }
+
+        closeList();
+        if (line.trim()) {
+          output.push(`<p>${formatInline(line)}</p>`);
+        }
+      }
+
+      closeList();
+      if (inCodeBlock && codeLines.length) {
+        output.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+      }
+      return output.join("") || "<p>没有返回内容。</p>";
+    }
+
+    function formatInline(value) {
+      return value
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+    }
+
+    function routeLabel(data) {
+      if (data.intent) {
+        return String(data.intent);
+      }
+      if (data.tool) {
+        return String(data.tool);
+      }
+      if (data.routing) {
+        return String(data.routing);
+      }
+      return "Agent";
+    }
+
+    function getSessionId() {
+      let sessionId = localStorage.getItem("rag_agent_session_id");
+      if (!sessionId) {
+        sessionId = crypto.randomUUID();
+        localStorage.setItem("rag_agent_session_id", sessionId);
+      }
+      state.agentSessionId = sessionId;
+      return sessionId;
+    }
+
+    function downloadReport() {
+      if (!state.latestAnalysis) {
+        showStatus(elements.matchResult, "请先完成一次简历与岗位匹配", true);
+        return;
+      }
+
+      const analysis = state.latestAnalysis;
+      const list = (items) => asStringArray(items).map((item) => `- ${item}`).join("\n");
+      let report = "简历与岗位匹配报告\n";
+      report += `生成日期：${new Date().toLocaleString("zh-CN")}\n\n`;
+      report += `综合匹配度：${analysis.match_score ?? "-"}%\n\n`;
+      report += `匹配技能：\n${list(analysis.matched_skills)}\n\n`;
+      report += `技能缺口：\n${list(analysis.skill_gaps)}\n\n`;
+      report += `简历修改建议：\n${list(analysis.resume_suggestions)}\n\n`;
+      report += `预测面试题：\n${list(analysis.interview_questions)}\n`;
+
+      if (state.latestStudyPlan) {
+        report += `\n学习计划：${state.latestStudyPlan.goal || ""}\n`;
+        for (const week of state.latestStudyPlan.weeks || []) {
+          report += `\n第 ${week.week} 周：${week.focus || ""}\n`;
+          report += `${list(week.tasks)}\n`;
+          report += `交付物：${week.deliverable || ""}\n`;
+        }
+      }
+
+      const blob = new Blob(["\uFEFF" + report], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "简历岗位匹配报告.txt";
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function setLoading(button, isLoading, loadingText) {
+      if (!button.dataset.defaultText) {
+        button.dataset.defaultText = button.textContent;
+      }
+      button.disabled = isLoading;
+      button.textContent = isLoading ? loadingText || "处理中..." : button.dataset.defaultText;
+    }
+
+    function showError(container, error) {
+      container.className = "answer-content is-error";
+      container.textContent = error.message || "请求失败，请确认后端正在运行";
+    }
+
+    function showStatus(container, message, isError = false) {
+      container.textContent = message;
+      container.classList.toggle("is-error", isError);
+    }
+
+    function escapeHtml(value) {
+      const element = document.createElement("div");
+      element.textContent = String(value ?? "");
+      return element.innerHTML;
+    }
+
+    function asStringArray(value) {
+      return Array.isArray(value)
+        ? value.map((item) => String(item ?? "")).filter(Boolean)
+        : [];
+    }
+
+    function numberOrZero(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : 0;
+    }
   </script>
-
 </body>
 </html>
