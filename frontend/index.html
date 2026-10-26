@@ -660,6 +660,106 @@
       color: var(--danger);
     }
 
+    .documents-surface {
+      margin-top: 18px;
+    }
+
+    .documents-heading {
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .documents-heading h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .documents-heading p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .document-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .document-table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .document-table th,
+    .document-table td {
+      padding: 11px 13px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .document-table th {
+      color: var(--muted);
+      background: var(--surface-muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .document-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .document-table tbody tr:hover {
+      background: #fbfcfd;
+    }
+
+    .document-name {
+      display: block;
+      max-width: 360px;
+      overflow: hidden;
+      color: #263746;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .document-meta-value {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .document-chunk-count {
+      display: inline-flex;
+      min-width: 30px;
+      min-height: 24px;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 8px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      border-radius: 999px;
+      font-weight: 700;
+    }
+
+    .button.danger {
+      min-height: 32px;
+      padding: 5px 10px;
+      color: var(--danger);
+      background: var(--surface);
+      border-color: #e4bcbc;
+      font-size: 11px;
+    }
+
+    .button.danger:hover {
+      color: #862424;
+      background: #fff4f4;
+      border-color: #d89b9b;
+    }
+
     .result-layout {
       margin-top: 24px;
       padding-top: 22px;
@@ -868,6 +968,39 @@
       .upload-grid,
       .result-grid {
         grid-template-columns: 1fr;
+      }
+
+      .document-table {
+        min-width: 0;
+        table-layout: fixed;
+      }
+
+      .document-table th,
+      .document-table td {
+        padding: 10px 8px;
+      }
+
+      .document-table th:nth-child(3),
+      .document-table td:nth-child(3),
+      .document-table th:nth-child(4),
+      .document-table td:nth-child(4) {
+        display: none;
+      }
+
+      .document-table th:nth-child(2),
+      .document-table td:nth-child(2) {
+        width: 64px;
+        text-align: center;
+      }
+
+      .document-table th:last-child,
+      .document-table td:last-child {
+        width: 62px;
+        text-align: right;
+      }
+
+      .document-name {
+        max-width: 100%;
       }
 
       .action-row .button,
@@ -1086,6 +1219,31 @@
           </div>
           <p id="uploadResult" class="status-line" aria-live="polite"></p>
         </div>
+
+        <section class="surface documents-surface" aria-labelledby="documentInventoryTitle">
+          <div class="section-heading documents-heading">
+            <div>
+              <h3 id="documentInventoryTitle">已入库文档</h3>
+              <p id="documentSummary">正在读取文档列表</p>
+            </div>
+          </div>
+          <div id="documentTableWrap" class="document-table-wrap" hidden>
+            <table class="document-table">
+              <thead>
+                <tr>
+                  <th scope="col">文档</th>
+                  <th scope="col">索引片段</th>
+                  <th scope="col">文件大小</th>
+                  <th scope="col">更新时间</th>
+                  <th scope="col">操作</th>
+                </tr>
+              </thead>
+              <tbody id="documentRows"></tbody>
+            </table>
+          </div>
+          <div id="documentEmpty" class="empty-state">正在连接文档服务...</div>
+          <p id="documentResult" class="status-line" aria-live="polite"></p>
+        </section>
       </section>
 
       <section id="page-match" class="page" aria-labelledby="matchTitle" hidden>
@@ -1167,6 +1325,7 @@
       latestStudyPlan: null,
       latestGaps: [],
       agentSessionId: null,
+      documents: [],
     };
 
     const pageMeta = {
@@ -1184,6 +1343,7 @@
       bindActions();
       bindFileInputs();
       refreshHealth();
+      refreshDocumentsPage();
     });
 
     function cacheElements() {
@@ -1216,6 +1376,11 @@
         "pdfFileName",
         "uploadButton",
         "uploadResult",
+        "documentSummary",
+        "documentTableWrap",
+        "documentRows",
+        "documentEmpty",
+        "documentResult",
         "matchForm",
         "resumeFile",
         "jobFile",
@@ -1262,6 +1427,9 @@
 
       document.title = `${pageMeta[pageName][1]} | RAG 求职工作台`;
       window.scrollTo({ top: 0, behavior: "smooth" });
+      if (pageName === "documents") {
+        refreshDocumentsPage();
+      }
     }
 
     function bindActions() {
@@ -1283,6 +1451,7 @@
       elements.clearAgentSession.addEventListener("click", clearAgentSession);
 
       elements.uploadButton.addEventListener("click", uploadPdf);
+      elements.documentRows.addEventListener("click", handleDocumentAction);
       elements.matchForm.addEventListener("submit", (event) => {
         event.preventDefault();
         matchResume();
@@ -1291,7 +1460,10 @@
       elements.downloadReport.addEventListener("click", downloadReport);
 
       document.getElementById("refreshHealth").addEventListener("click", refreshHealth);
-      document.getElementById("refreshHealthDocuments").addEventListener("click", refreshHealth);
+      document.getElementById("refreshHealthDocuments").addEventListener("click", () => {
+        refreshHealth();
+        refreshDocumentsPage();
+      });
     }
 
     function bindFileInputs() {
@@ -1468,11 +1640,103 @@
           body: formData,
         });
         showStatus(elements.uploadResult, data.message || "文档上传成功");
-        await refreshHealth();
+        await Promise.all([refreshHealth(), refreshDocumentsPage()]);
       } catch (error) {
         showStatus(elements.uploadResult, error.message, true);
       } finally {
         setLoading(elements.uploadButton, false);
+      }
+    }
+
+    async function refreshDocumentsPage() {
+      elements.documentEmpty.hidden = false;
+      elements.documentEmpty.textContent = "正在读取文档列表...";
+      elements.documentTableWrap.hidden = true;
+      elements.documentSummary.textContent = "正在读取文档列表";
+
+      try {
+        const data = await requestJson("/documents", { cache: "no-store" });
+        renderDocuments(data);
+      } catch (error) {
+        state.documents = [];
+        elements.documentSummary.textContent = "文档列表读取失败";
+        elements.documentTableWrap.hidden = true;
+        elements.documentEmpty.hidden = false;
+        elements.documentEmpty.textContent = error.message || "请确认后端服务正在运行";
+      }
+    }
+
+    function renderDocuments(data) {
+      const documents = Array.isArray(data.documents) ? data.documents : [];
+      state.documents = documents;
+      const documentCount = numberOrZero(data.document_count);
+      const chunkCount = numberOrZero(data.chunk_count);
+      elements.documentSummary.textContent =
+        `${documentCount} 个文档 · ${chunkCount} 个索引片段`;
+
+      if (!documents.length) {
+        elements.documentRows.replaceChildren();
+        elements.documentTableWrap.hidden = true;
+        elements.documentEmpty.hidden = false;
+        elements.documentEmpty.textContent = "当前知识库还没有 PDF 文档。";
+        return;
+      }
+
+      elements.documentRows.innerHTML = documents.map((document) => {
+        const filename = String(document.filename || "");
+        const chunkCountForDocument = numberOrZero(document.chunk_count);
+        return `
+          <tr>
+            <td>
+              <span class="document-name" title="${escapeHtml(filename)}">${escapeHtml(filename)}</span>
+            </td>
+            <td><span class="document-chunk-count">${chunkCountForDocument}</span></td>
+            <td class="document-meta-value">${escapeHtml(formatBytes(document.size_bytes))}</td>
+            <td class="document-meta-value">${escapeHtml(formatDate(document.modified_at))}</td>
+            <td>
+              <button
+                class="button danger"
+                type="button"
+                data-delete-document="${escapeHtml(filename)}"
+              >删除</button>
+            </td>
+          </tr>`;
+      }).join("");
+      elements.documentEmpty.hidden = true;
+      elements.documentTableWrap.hidden = false;
+    }
+
+    async function handleDocumentAction(event) {
+      const button = event.target.closest("[data-delete-document]");
+      if (!button) {
+        return;
+      }
+      await deleteDocument(button.dataset.deleteDocument, button);
+    }
+
+    async function deleteDocument(filename, button) {
+      const confirmed = window.confirm(
+        `确定删除“${filename}”吗？系统会重建索引，失败时自动恢复文档。`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setLoading(button, true, "删除中...");
+      showStatus(elements.documentResult, "正在删除文档并重建索引...");
+      try {
+        const data = await requestJson(
+          `/documents/${encodeURIComponent(filename)}`,
+          { method: "DELETE" },
+        );
+        await Promise.all([refreshHealth(), refreshDocumentsPage()]);
+        showStatus(elements.documentResult, data.message || "文档已删除");
+      } catch (error) {
+        showStatus(elements.documentResult, error.message, true);
+      } finally {
+        if (button.isConnected) {
+          setLoading(button, false);
+        }
       }
     }
 
@@ -1785,6 +2049,31 @@
     function numberOrZero(value) {
       const number = Number(value);
       return Number.isFinite(number) ? number : 0;
+    }
+
+    function formatBytes(value) {
+      const bytes = numberOrZero(value);
+      if (bytes < 1024) {
+        return `${bytes} B`;
+      }
+      if (bytes < 1024 * 1024) {
+        return `${(bytes / 1024).toFixed(1)} KB`;
+      }
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function formatDate(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return "-";
+      }
+      return date.toLocaleString("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     }
   </script>
 </body>

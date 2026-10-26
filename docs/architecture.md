@@ -27,16 +27,20 @@ flowchart LR
     Split --> Staging[Build staging Chroma collection]
     Split --> Tokens[Build staged Chinese bigram BM25 index]
     Staging --> Verify{Verify chunk count}
-    Verify -->|valid| Switch[Persist active collection<br/>and swap in-memory state]
-    Verify -->|invalid| Cleanup[Delete staging collection]
-    Switch --> Chroma[(Active Chroma)]
-    Switch --> BM25[(Active BM25)]
+Verify -->|valid| Switch[Persist active collection<br/>and swap in-memory state]
+Verify -->|invalid| Cleanup[Delete staging collection]
+Switch --> Chroma[(Active Chroma)]
+Switch --> BM25[(Active BM25)]
+Delete[Delete PDF request] --> Backup[Move PDF to hidden backup]
+Backup --> Parse
 ```
 
 The upload endpoint writes the validated PDF to a temporary path, rebuilds both
 indexes in a staging collection, checks the stored chunk count, and only then
 updates the active collection pointer. A failed rebuild removes the staging
 collection and restores the previous PDF instead of damaging the active index.
+The delete endpoint follows the same build-and-switch path after moving the PDF
+to a hidden backup. A failed rebuild restores the PDF and keeps the old indexes.
 The health endpoint verifies that the Chroma collection and BM25 document
 counts agree.
 

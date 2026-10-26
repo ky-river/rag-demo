@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import Counter
 from contextlib import closing
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -418,6 +419,18 @@ def build_bm25_index(documents: list[Document]) -> BM25Okapi | None:
     return BM25Okapi(tokenized_documents) if tokenized_documents else None
 
 
+def indexed_pdf_files() -> list[Path]:
+    return [
+        path
+        for path in sorted(DATA_DIR.iterdir())
+        if (
+            path.is_file()
+            and not path.name.startswith(".")
+            and path.suffix.lower() == ".pdf"
+        )
+    ]
+
+
 def refresh_bm25_index(documents: list[Document] | None = None) -> None:
     global bm25_documents, bm25_index
 
@@ -431,9 +444,7 @@ def build_index() -> int:
 
     with INDEX_REBUILD_LOCK:
         documents = []
-        for pdf_path in sorted(DATA_DIR.glob("*.pdf")):
-            if pdf_path.name.startswith("."):
-                continue
+        for pdf_path in indexed_pdf_files():
             pdf_documents = PyPDFLoader(str(pdf_path)).load()
             for document in pdf_documents:
                 document.metadata["filename"] = pdf_path.name
@@ -668,6 +679,29 @@ def health_status() -> dict:
     }
 
 
+def build_document_inventory() -> list[dict[str, Any]]:
+    chunk_counts = Counter(
+        str(document.metadata.get("filename"))
+        for document in bm25_documents
+        if document.metadata.get("filename")
+    )
+    inventory = []
+    for pdf_path in indexed_pdf_files():
+        stat = pdf_path.stat()
+        inventory.append(
+            {
+                "filename": pdf_path.name,
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(
+                    stat.st_mtime,
+                    tz=timezone.utc,
+                ).isoformat(),
+                "chunk_count": chunk_counts.get(pdf_path.name, 0),
+            }
+        )
+    return inventory
+
+
 @app.get("/")
 def home():
     return {"message": "RAG API is running", "version": APP_VERSION}
@@ -680,6 +714,21 @@ def health():
         status_code=200 if result["index_ready"] else 503,
         content=result,
     )
+
+
+@app.get("/documents")
+async def list_documents():
+    async with UPLOAD_LOCK:
+        with INDEX_REBUILD_LOCK:
+            documents = build_document_inventory()
+            collection = active_collection_name
+            chunk_count = len(bm25_documents)
+    return {
+        "documents": documents,
+        "document_count": len(documents),
+        "chunk_count": chunk_count,
+        "collection": collection,
+    }
 
 
 def document_key(document: Document) -> tuple:
@@ -1337,6 +1386,68 @@ async def upload_pdf(file: UploadFile = File(...)):
         return {
             "message": f"PDF 上传并入库成功，共新增 {chunk_count} 个文本片段",
             "filename": filename,
+            "chunks": chunk_count,
+            "collection": active_collection_name,
+        }
+
+
+@app.delete("/documents/{filename}")
+async def delete_document(filename: str):
+    safe_filename = Path(filename).name
+    if (
+        safe_filename != filename
+        or not safe_filename
+        or not safe_filename.lower().endswith(".pdf")
+    ):
+        return {"error": "文档名称不合法"}
+
+    pdf_path = DATA_DIR / safe_filename
+    delete_token = uuid4().hex
+    backup_pdf_path = DATA_DIR / f".deleted_{delete_token}.pdf"
+
+    async with UPLOAD_LOCK:
+        if not pdf_path.is_file():
+            return {"error": "文档不存在或已经被删除"}
+
+        try:
+            os.replace(pdf_path, backup_pdf_path)
+        except OSError:
+            return {"error": "无法移动待删除的 PDF 文件"}
+
+        try:
+            chunk_count = await run_in_threadpool(build_index)
+        except Exception as exc:
+            try:
+                os.replace(backup_pdf_path, pdf_path)
+            except OSError as restore_error:
+                logger.error(
+                    "恢复删除失败文档时出错：%s",
+                    restore_error,
+                    extra={
+                        "event": "document_delete_restore_failed",
+                        "filename": safe_filename,
+                    },
+                )
+            return {
+                "error": f"删除后索引重建失败，已保留原索引：{exc}",
+                "collection": active_collection_name,
+            }
+
+        try:
+            backup_pdf_path.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            logger.warning(
+                "清理已删除文档备份失败：%s",
+                cleanup_error,
+                extra={
+                    "event": "document_delete_cleanup_failed",
+                    "filename": safe_filename,
+                },
+            )
+
+        return {
+            "message": f"文档已删除并重建索引，当前共 {chunk_count} 个文本片段",
+            "filename": safe_filename,
             "chunks": chunk_count,
             "collection": active_collection_name,
         }

@@ -223,6 +223,89 @@ class ApiEndpointTest(unittest.TestCase):
         self.assertEqual(response.json()["analysis"], analysis)
         self.assertEqual(create.call_args.args[0], "resume_match")
 
+    def test_documents_returns_file_and_chunk_inventory(self):
+        with TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            (data_dir / "project.pdf").write_bytes(b"1234567890")
+            (data_dir / "RESUME.PDF").write_bytes(b"12345")
+            (data_dir / ".backup.pdf").write_bytes(b"hidden")
+            (data_dir / "notes.txt").write_text("ignored", encoding="utf-8")
+            stored_documents = [
+                SimpleNamespace(metadata={"filename": "project.pdf"}),
+                SimpleNamespace(metadata={"filename": "project.pdf"}),
+                SimpleNamespace(metadata={"filename": "RESUME.PDF"}),
+            ]
+
+            with (
+                patch.object(main, "DATA_DIR", data_dir),
+                patch.object(main, "bm25_documents", stored_documents),
+                patch.object(main, "active_collection_name", "rag_demo_build_test"),
+            ):
+                response = client.get("/documents")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["document_count"], 2)
+        self.assertEqual(body["chunk_count"], 3)
+        self.assertEqual(body["collection"], "rag_demo_build_test")
+        inventory = {item["filename"]: item for item in body["documents"]}
+        self.assertEqual(set(inventory), {"project.pdf", "RESUME.PDF"})
+        self.assertEqual(inventory["project.pdf"]["size_bytes"], 10)
+        self.assertEqual(inventory["project.pdf"]["chunk_count"], 2)
+        self.assertEqual(inventory["RESUME.PDF"]["chunk_count"], 1)
+
+    def test_delete_document_rebuilds_index_and_removes_file(self):
+        with TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            (data_dir / "keep.pdf").write_bytes(b"keep")
+            (data_dir / "remove.pdf").write_bytes(b"remove")
+
+            with (
+                patch.object(main, "DATA_DIR", data_dir),
+                patch.object(main, "build_index", return_value=5) as build,
+                patch.object(main, "active_collection_name", "rag_demo_build_test"),
+            ):
+                response = client.delete("/documents/remove.pdf")
+
+            self.assertFalse((data_dir / "remove.pdf").exists())
+            self.assertTrue((data_dir / "keep.pdf").exists())
+            self.assertEqual(list(data_dir.glob(".deleted_*.pdf")), [])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["chunks"], 5)
+        self.assertEqual(response.json()["collection"], "rag_demo_build_test")
+        build.assert_called_once_with()
+
+    def test_delete_document_failure_restores_file_and_old_index(self):
+        with TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            pdf_path = data_dir / "remove.pdf"
+            pdf_path.write_bytes(b"previous-content")
+
+            with (
+                patch.object(main, "DATA_DIR", data_dir),
+                patch.object(
+                    main,
+                    "build_index",
+                    side_effect=RuntimeError("staging failed"),
+                ),
+                patch.object(main, "active_collection_name", "rag_demo_old"),
+            ):
+                response = client.delete("/documents/remove.pdf")
+
+            self.assertEqual(pdf_path.read_bytes(), b"previous-content")
+            self.assertEqual(list(data_dir.glob(".deleted_*.pdf")), [])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("已保留原索引", response.json()["error"])
+        self.assertEqual(response.json()["collection"], "rag_demo_old")
+
+    def test_delete_document_rejects_invalid_name(self):
+        response = client.delete("/documents/notes.txt")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"error": "文档名称不合法"})
+
     def test_upload_rebuilds_index_without_external_model(self):
         fake_page = SimpleNamespace(page_content="可读取的 PDF 文本")
 

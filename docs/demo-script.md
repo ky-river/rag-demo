@@ -48,7 +48,18 @@ Generate a study plan from the identified skill gaps.
 
 Show the four-week structure and one concrete deliverable per week.
 
-## 6. Engineering Evidence (25 seconds)
+## 6. Document Lifecycle (20 seconds)
+
+Open the document management page and show:
+
+- Per-file chunk counts, size, and modification time
+- The delete confirmation flow
+- That successful deletion rebuilds both indexes atomically
+
+Do not delete the only remaining document: the system intentionally rejects an
+empty index and restores the deleted file.
+
+## 7. Engineering Evidence (25 seconds)
 
 Show:
 
@@ -57,7 +68,7 @@ Show:
 - The GitHub Actions workflow
 - The evaluation summary in the README
 
-## 7. Architecture (15 seconds)
+## 8. Architecture (15 seconds)
 
 Show `docs/architecture.md` and briefly explain:
 

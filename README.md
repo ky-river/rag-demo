@@ -43,6 +43,7 @@ curl -sS http://127.0.0.1:8000/health
 
 - PDF 知识库问答
 - 上传 PDF 后在临时集合中重建双索引，校验成功后原子切换
+- 查看已入库文档的片段数、大小和更新时间，并安全删除后自动重建索引
 - Chroma 向量召回与 BM25 词法召回通过加权 RRF 融合
 - 可选 ONNX Cross-Encoder 重排，加载或推理失败时自动回退到 RRF
 - 回答返回文件名、页码、引用片段和混合检索分数
@@ -184,7 +185,9 @@ PDF 上传 -> PDF 文本解析 -> RecursiveCharacterTextSplitter 切分
 | `GET` | `/health` | 检查索引完整性、文档数和重排状态 |
 | `POST` | `/agent-graph` | LangGraph Agent 主入口 |
 | `POST` | `/search` | 混合检索与调试 |
+| `GET` | `/documents` | 查看已入库文档和索引片段统计 |
 | `POST` | `/upload` | 上传 PDF 并重建双索引 |
+| `DELETE` | `/documents/{filename}` | 删除 PDF 并原子重建索引 |
 | `POST` | `/match` | 简历与岗位 JD 匹配 |
 | `POST` | `/study-plan` | 根据技能缺口生成学习计划 |
 
@@ -259,7 +262,7 @@ curl -sS -X POST http://127.0.0.1:8000/search \
 - Agent 工具选择：5/5
 - 模型主动选择工具：5/5
 - 异常场景：4/4
-- 离线回归测试：21/21
+- 离线回归测试：25/25
 
 延迟为本地开发环境结果，会随网络、模型服务和机器状态变化。当前评测语料规模较小，
 这些数字用于验证检索与重排改动是否有效，不代表生产环境泛化能力。
@@ -295,6 +298,7 @@ python -m unittest discover -s tests -t . -v
 ## 项目亮点
 
 - 上传后先构建临时 Chroma 集合，校验片段数后再切换；失败时保留旧索引和旧 PDF。
+- 文档删除失败时自动恢复 PDF 和旧索引，避免管理操作破坏在线检索。
 - 使用中文 bigram + 加权 RRF 补齐精确术语召回，扩展集 Hit@4 达到 30/30。
 - 用 40 题检索集量化重排收益：Hit@1 从 24/30 提升到 28/30。
 - 问答结果带来源，便于核验答案。
