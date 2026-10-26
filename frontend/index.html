@@ -1319,7 +1319,9 @@
         data = {};
       }
       if (!response.ok || data.error) {
-        throw new Error(data.error || data.message || `请求失败 (${response.status})`);
+        const message = data.error || data.message || `请求失败 (${response.status})`;
+        const requestId = data.request_id ? `（请求 ID: ${data.request_id}）` : "";
+        throw new Error(`${message}${requestId}`);
       }
       return data;
     }

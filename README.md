@@ -196,6 +196,29 @@ curl -sS -X POST http://127.0.0.1:8000/search \
   -d '{"question":"相关性阈值是多少？"}'
 ```
 
+## 超时、日志与请求追踪
+
+模型客户端统一通过环境变量控制超时和重试：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `MODEL_TIMEOUT_SECONDS` | `60` | 单次模型请求超时时间 |
+| `MODEL_MAX_RETRIES` | `1` | 超时或临时错误后的最大重试次数 |
+| `LOG_LEVEL` | `INFO` | 应用 JSON 日志级别 |
+
+每个 HTTP 请求都会生成或复用合法的 `X-Request-ID`，并通过同名响应头返回。
+应用以 JSON 记录请求耗时、状态码、模型操作、模型耗时和错误类型。模型请求超时时，
+接口返回 `504`，响应中包含错误说明和 `request_id`，便于直接定位后端日志。
+
+```json
+{
+  "error": "模型请求超时，请稍后重试",
+  "request_id": "example-request-id"
+}
+```
+
+`/health` 还会返回当前模型超时和重试配置。
+
 ## Agent 工具调用
 
 当前网页通过 `/agent-graph` 调用 LangGraph 工作流。路由节点使用模型选择工具，
@@ -236,7 +259,7 @@ curl -sS -X POST http://127.0.0.1:8000/search \
 - Agent 工具选择：5/5
 - 模型主动选择工具：5/5
 - 异常场景：4/4
-- 离线回归测试：8/8
+- 离线回归测试：18/18
 
 延迟为本地开发环境结果，会随网络、模型服务和机器状态变化。当前评测语料规模较小，
 这些数字用于验证检索与重排改动是否有效，不代表生产环境泛化能力。
@@ -263,7 +286,7 @@ RAG_API_BASE_URL=http://127.0.0.1:8002 python eval/run_error_eval.py
 不调用外部模型的路由回归测试：
 
 ```bash
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -t . -v
 ```
 
 旧的 `/agent-tools` 路径保留为兼容别名，会使用同一套 LangGraph 工作流。
@@ -282,6 +305,6 @@ python -m unittest discover -s tests -v
 
 - 完善用户登录和数据隔离
 - 将索引重建改为临时目录构建成功后再原子替换
-- 增加模型请求超时、结构化日志和请求追踪
 - 增加重排服务缓存、并发控制和更多领域评测集
+- 将 JSON 日志接入集中式日志平台并增加指标看板
 - Docker 部署到 Linux 云服务器

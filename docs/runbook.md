@@ -210,11 +210,13 @@ docker compose logs --tail=100
 Command + Shift + R
 ```
 
-### 模型请求较慢
+### 模型请求较慢或超时
 
 简历匹配和 Agent 任务需要多次模型调用，通常等待 20 到 60 秒属于正常范围。
-如果持续超时，检查 `.env` 中的模型配置、网络连接和后端日志。不要把 `.env`
-或 API Key 粘贴到公开仓库、截图或演示视频中。
+如果持续超时，检查 `.env` 中的模型配置、网络连接和后端日志。模型默认单次超时为
+60 秒，并重试 1 次，可通过 `MODEL_TIMEOUT_SECONDS` 和 `MODEL_MAX_RETRIES` 调整。
+接口返回 `504` 时，网页会显示请求 ID；在 JSON 日志中检索该 ID 即可定位对应请求。
+不要把 `.env`、请求头中的认证信息或 API Key 粘贴到公开仓库、截图或演示视频中。
 
 ### 修改代码后页面没有变化
 
@@ -230,7 +232,7 @@ docker compose up -d --build
 ```bash
 cd ~/Desktop/rag-demo
 source .venv/bin/activate
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -t . -v
 git diff --check
 git status --short
 ```

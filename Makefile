@@ -1,7 +1,7 @@
 .PHONY: test up down health logs
 
 test:
-	python -m unittest discover -s tests -v
+	python -m unittest discover -s tests -t . -v
 
 up:
 	docker compose up --build -d

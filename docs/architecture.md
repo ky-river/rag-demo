@@ -70,6 +70,23 @@ The current graph is intentionally a bounded single-tool workflow. A future
 iteration can add query rewriting, evidence verification, and bounded retry
 nodes while keeping the same tool interface.
 
+## Request Observability
+
+```mermaid
+flowchart LR
+    Request[HTTP request] --> RequestID[X-Request-ID middleware]
+    RequestID --> Route[FastAPI route]
+    Route --> Model[Central model call wrapper]
+    Model --> Timeout[Timeout and retry policy]
+    Model --> Logs[(JSON request and model logs)]
+    RequestID --> Logs
+```
+
+Every request receives a validated or generated request ID. JSON logs capture the
+method, path, status code, request duration, model operation, model duration, and
+error type. A model timeout returns HTTP 504 with the same request ID so operators
+can locate the corresponding log entries without exposing model credentials.
+
 ## Failure Boundaries
 
 - Model calls are isolated inside the generation and agent-routing helpers.

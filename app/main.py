@@ -7,15 +7,18 @@ import math
 import re
 import sqlite3
 import shutil
+import sys
 import tempfile
 import time
 from contextlib import closing
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_chroma import Chroma
@@ -24,7 +27,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import END, START, StateGraph
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 
@@ -38,11 +41,36 @@ DATA_DIR.mkdir(exist_ok=True)
 load_dotenv(ROOT / ".env", override=True)
 
 
+def positive_float_from_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def non_negative_int_from_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+MODEL_TIMEOUT_SECONDS = positive_float_from_env("MODEL_TIMEOUT_SECONDS", 60.0)
+MODEL_MAX_RETRIES = non_negative_int_from_env("MODEL_MAX_RETRIES", 1)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
+
+
 class BailianEmbeddings(Embeddings):
     def __init__(self):
         self.client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_BASE_URL"),
+            timeout=MODEL_TIMEOUT_SECONDS,
+            max_retries=MODEL_MAX_RETRIES,
         )
 
     def embed_documents(self, texts):
@@ -99,6 +127,8 @@ bm25_documents: list[Document] = []
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     base_url=os.getenv("OPENAI_BASE_URL"),
+    timeout=MODEL_TIMEOUT_SECONDS,
+    max_retries=MODEL_MAX_RETRIES,
 )
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -126,9 +156,83 @@ CHINESE_STOP_BIGRAMS = {
     "这个", "项目", "什么", "哪些", "怎么", "如何", "是否",
     "可以", "多少", "一个", "的是", "当前", "系统",
 }
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("rag_demo")
 reranker = None
 reranker_error: str | None = None
+
+
+class JsonLogFormatter(logging.Formatter):
+    standard_fields = set(logging.makeLogRecord({}).__dict__)
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for key, value in record.__dict__.items():
+            if key not in self.standard_fields and key not in {"message", "asctime"}:
+                payload[key] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def configure_logging() -> None:
+    level = getattr(logging, LOG_LEVEL, logging.INFO)
+    logger.setLevel(level)
+    logger.propagate = False
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonLogFormatter())
+        logger.addHandler(handler)
+
+
+def current_request_id() -> str:
+    return request_id_context.get()
+
+
+def create_chat_completion(operation: str, **kwargs):
+    model = kwargs.get("model", "unknown")
+    started_at = time.perf_counter()
+    logger.info(
+        "model_request_started",
+        extra={
+            "event": "model_request_started",
+            "operation": operation,
+            "model": model,
+            "request_id": current_request_id(),
+        },
+    )
+    try:
+        response = client.chat.completions.create(**kwargs)
+    except Exception as exc:
+        logger.error(
+            "model_request_failed",
+            extra={
+                "event": "model_request_failed",
+                "operation": operation,
+                "model": model,
+                "request_id": current_request_id(),
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
+        )
+        raise
+
+    logger.info(
+        "model_request_completed",
+        extra={
+            "event": "model_request_completed",
+            "operation": operation,
+            "model": model,
+            "request_id": current_request_id(),
+            "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+        },
+    )
+    return response
 
 
 def init_session_db() -> None:
@@ -170,16 +274,84 @@ def clear_history(session_id: str) -> None:
         connection.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
 
 
+configure_logging()
 init_session_db()
 
 app = FastAPI(title="RAG Knowledge Base API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request_id = (
+        supplied_request_id
+        if REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
+        else str(uuid4())
+    )
+    request.state.request_id = request_id
+    token = request_id_context.set(request_id)
+    started_at = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(
+            "request_failed",
+            extra={
+                "event": "request_failed",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
+        )
+        raise
+    else:
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "request_completed",
+            extra={
+                "event": "request_completed",
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+        return response
+    finally:
+        request_id_context.reset(token)
+
+
+@app.exception_handler(APITimeoutError)
+async def model_timeout_handler(request: Request, exc: APITimeoutError):
+    request_id = getattr(request.state, "request_id", current_request_id())
+    logger.warning(
+        "model_request_timeout",
+        extra={
+            "event": "model_request_timeout",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
+    return JSONResponse(
+        status_code=504,
+        content={
+            "error": "模型请求超时，请稍后重试",
+            "request_id": request_id,
+        },
+    )
 
 
 def tokenize_for_bm25(text: str) -> list[str]:
@@ -355,6 +527,10 @@ def health_status() -> dict:
         "chunk_count": chunk_count,
         "collection_count": collection_count,
         "collection_error": collection_error,
+        "model": {
+            "timeout_seconds": MODEL_TIMEOUT_SECONDS,
+            "max_retries": MODEL_MAX_RETRIES,
+        },
         "reranking": reranking_status(),
     }
 
@@ -533,7 +709,8 @@ def answer_from_knowledge_base(question: str, history=None):
     ]
     messages.extend(history or [])
     messages.append({"role": "user", "content": prompt})
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        "knowledge_answer",
         model="qwen-plus",
         messages=messages,
     )
@@ -634,7 +811,8 @@ def select_agent_tool(
     message: str,
     history: list[dict[str, str]],
 ) -> tuple[str, dict[str, str], str]:
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        "agent_routing",
         model="qwen-plus",
         messages=[
             {"role": "system", "content": AGENT_ROUTING_PROMPT},
@@ -667,7 +845,8 @@ def select_agent_tool(
 
 
 def run_study_plan_text(topic: str, history=None) -> str:
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        "study_plan_text",
         model="qwen-plus",
         messages=[
             {"role": "system", "content": "你是一个务实的技术学习规划助手。"},
@@ -766,9 +945,10 @@ def run_agent_graph(request: AgentRequest):
 
     session_id = request.session_id or str(uuid4())
     history = load_history(session_id)[-10:]
+    graph_history = history.copy()
     result = agent_graph.invoke({
         "message": message,
-        "history": history,
+        "history": graph_history,
     })
     answer = result.get("answer", "")
     history.extend([
@@ -828,7 +1008,8 @@ def agent(request: AgentRequest):
                 "用中文回答，包含每周目标、任务和交付物。用户需求：" + message
             )},
         ]
-        response = client.chat.completions.create(
+        response = create_chat_completion(
+            "legacy_agent_study_plan",
             model="qwen-plus",
             messages=messages,
         )
@@ -902,7 +1083,8 @@ match_score 是 0 到 100 的整数；其他字段都是中文字符串数组。
 {job_text[:30000]}
 """
 
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        "resume_match",
         model="qwen-plus",
         messages=[
             {"role": "system", "content": "你是严谨的招聘分析助手。"},
@@ -936,7 +1118,8 @@ def study_plan(request: StudyPlanRequest):
     if not gaps:
         return {"error": "没有可用于制定计划的技能缺口"}
 
-    response = client.chat.completions.create(
+    response = create_chat_completion(
+        "study_plan_json",
         model="qwen-plus",
         messages=[
             {"role": "system", "content": "你是一个务实的技术学习规划助手。"},
