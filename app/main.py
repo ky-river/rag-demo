@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import json
 import logging
@@ -9,6 +10,7 @@ import sqlite3
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from contextlib import closing
 from contextvars import ContextVar
@@ -21,6 +23,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
@@ -62,6 +65,34 @@ MODEL_MAX_RETRIES = non_negative_int_from_env("MODEL_MAX_RETRIES", 1)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
+DEFAULT_COLLECTION_NAME = "rag_demo"
+BUILD_COLLECTION_PREFIX = "rag_demo_build_"
+COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,61}[A-Za-z0-9]$")
+ACTIVE_COLLECTION_FILE = DB_DIR / "active_collection.txt"
+INDEX_REBUILD_LOCK = threading.Lock()
+UPLOAD_LOCK = asyncio.Lock()
+
+
+def read_active_collection_name() -> str:
+    try:
+        name = ACTIVE_COLLECTION_FILE.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return DEFAULT_COLLECTION_NAME
+    if (
+        COLLECTION_NAME_PATTERN.fullmatch(name)
+        and (name == DEFAULT_COLLECTION_NAME or name.startswith(BUILD_COLLECTION_PREFIX))
+    ):
+        return name
+    return DEFAULT_COLLECTION_NAME
+
+
+def persist_active_collection_name(name: str) -> None:
+    ACTIVE_COLLECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = ACTIVE_COLLECTION_FILE.with_name(
+        f".{ACTIVE_COLLECTION_FILE.name}.{uuid4().hex}.tmp"
+    )
+    temp_path.write_text(name, encoding="utf-8")
+    os.replace(temp_path, ACTIVE_COLLECTION_FILE)
 
 
 class BailianEmbeddings(Embeddings):
@@ -117,8 +148,9 @@ class AgentGraphState(TypedDict, total=False):
 
 
 embeddings = BailianEmbeddings()
+active_collection_name = read_active_collection_name()
 vectorstore = Chroma(
-    collection_name="rag_demo",
+    collection_name=active_collection_name,
     persist_directory=str(DB_DIR),
     embedding_function=embeddings,
 )
@@ -378,47 +410,147 @@ def load_documents_from_store() -> list[Document]:
     ]
 
 
+def build_bm25_index(documents: list[Document]) -> BM25Okapi | None:
+    tokenized_documents = [
+        tokenize_for_bm25(document.page_content)
+        for document in documents
+    ]
+    return BM25Okapi(tokenized_documents) if tokenized_documents else None
+
+
 def refresh_bm25_index(documents: list[Document] | None = None) -> None:
     global bm25_documents, bm25_index
 
     bm25_documents = documents if documents is not None else load_documents_from_store()
-    tokenized_documents = [
-        tokenize_for_bm25(document.page_content)
-        for document in bm25_documents
-    ]
-    bm25_index = BM25Okapi(tokenized_documents) if tokenized_documents else None
+    bm25_index = build_bm25_index(bm25_documents)
 
 
 def build_index() -> int:
-    """从 data 中全部 PDF 重建索引，避免同名文件重复累积。"""
-    global vectorstore
+    """Build a staging index and switch to it only after validation succeeds."""
+    global active_collection_name, bm25_documents, bm25_index, vectorstore
 
-    documents = []
-    for pdf_path in sorted(DATA_DIR.glob("*.pdf")):
-        pdf_documents = PyPDFLoader(str(pdf_path)).load()
-        for document in pdf_documents:
-            document.metadata["filename"] = pdf_path.name
-        documents.extend(pdf_documents)
+    with INDEX_REBUILD_LOCK:
+        documents = []
+        for pdf_path in sorted(DATA_DIR.glob("*.pdf")):
+            if pdf_path.name.startswith("."):
+                continue
+            pdf_documents = PyPDFLoader(str(pdf_path)).load()
+            for document in pdf_documents:
+                document.metadata["filename"] = pdf_path.name
+            documents.extend(pdf_documents)
 
-    chunks = splitter.split_documents(documents)
-    chunks = [
-        chunk for chunk in chunks
-        if chunk.page_content and chunk.page_content.strip()
-    ]
+        chunks = splitter.split_documents(documents)
+        chunks = [
+            chunk for chunk in chunks
+            if chunk.page_content and chunk.page_content.strip()
+        ]
+        if not chunks:
+            raise ValueError("没有可用于建立索引的文本片段")
 
-    # 清空 Chroma 集合，不直接删除正在使用的 SQLite 文件。
-    vectorstore.delete_collection()
-    vectorstore = Chroma(
-        collection_name="rag_demo",
-        persist_directory=str(DB_DIR),
-        embedding_function=embeddings,
-    )
-    if chunks:
-        vectorstore.add_documents(chunks)
-    refresh_bm25_index(chunks)
-    return len(chunks)
+        old_collection_name = active_collection_name
+        old_vectorstore = vectorstore
+        new_collection_name = (
+            f"{BUILD_COLLECTION_PREFIX}{int(time.time())}_{uuid4().hex[:8]}"
+        )
+        staging_vectorstore = None
+
+        try:
+            staging_vectorstore = Chroma(
+                collection_name=new_collection_name,
+                persist_directory=str(DB_DIR),
+                embedding_function=embeddings,
+            )
+            staging_vectorstore.add_documents(chunks)
+            staged_count = staging_vectorstore._collection.count()
+            if staged_count != len(chunks):
+                raise RuntimeError(
+                    f"索引校验失败：预期 {len(chunks)} 个片段，实际 {staged_count} 个"
+                )
+            new_bm25_index = build_bm25_index(chunks)
+            persist_active_collection_name(new_collection_name)
+        except Exception:
+            if staging_vectorstore is not None:
+                try:
+                    staging_vectorstore.delete_collection()
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "清理失败索引集合时出错：%s",
+                        cleanup_error,
+                        extra={
+                            "event": "index_cleanup_failed",
+                            "collection": new_collection_name,
+                        },
+                    )
+            raise
+
+        vectorstore = staging_vectorstore
+        active_collection_name = new_collection_name
+        bm25_documents = chunks
+        bm25_index = new_bm25_index
+
+        if old_collection_name != new_collection_name:
+            try:
+                old_vectorstore.delete_collection()
+            except Exception as cleanup_error:
+                logger.warning(
+                    "删除旧索引集合时出错：%s",
+                    cleanup_error,
+                    extra={
+                        "event": "old_index_cleanup_failed",
+                        "collection": old_collection_name,
+                    },
+                )
+
+        logger.info(
+            "index_rebuild_completed",
+            extra={
+                "event": "index_rebuild_completed",
+                "collection": new_collection_name,
+                "previous_collection": old_collection_name,
+                "chunk_count": len(chunks),
+            },
+        )
+        return len(chunks)
 
 
+def cleanup_stale_build_collections() -> None:
+    try:
+        collections = vectorstore._client.list_collections()
+    except Exception as exc:
+        logger.warning(
+            "读取索引集合列表失败：%s",
+            exc,
+            extra={"event": "collection_list_failed"},
+        )
+        return
+
+    for collection in collections:
+        name = getattr(collection, "name", "")
+        if not name.startswith(BUILD_COLLECTION_PREFIX):
+            continue
+        if name == active_collection_name:
+            continue
+        try:
+            vectorstore._client.delete_collection(name)
+            logger.info(
+                "stale_index_collection_removed",
+                extra={
+                    "event": "stale_index_collection_removed",
+                    "collection": name,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "清理残留索引集合失败：%s",
+                exc,
+                extra={
+                    "event": "stale_index_cleanup_failed",
+                    "collection": name,
+                },
+            )
+
+
+cleanup_stale_build_collections()
 refresh_bm25_index()
 
 
@@ -523,6 +655,7 @@ def health_status() -> dict:
         "status": status,
         "version": APP_VERSION,
         "index_ready": index_ready,
+        "collection_name": active_collection_name,
         "document_count": document_count,
         "chunk_count": chunk_count,
         "collection_count": collection_count,
@@ -557,7 +690,7 @@ def document_key(document: Document) -> tuple:
     )
 
 
-def retrieve_knowledge(question: str):
+def _retrieve_knowledge_locked(question: str):
     raw_vector_results = vectorstore.similarity_search_with_score(
         question,
         k=RAG_CANDIDATE_K,
@@ -665,6 +798,11 @@ def retrieve_knowledge(question: str):
         for item in docs
     ]
     return docs, sources
+
+
+def retrieve_knowledge(question: str):
+    with INDEX_REBUILD_LOCK:
+        return _retrieve_knowledge_locked(question)
 
 
 def format_retrieval_context(item: dict) -> str:
@@ -1145,44 +1283,63 @@ async def upload_pdf(file: UploadFile = File(...)):
         return {"error": "只支持 PDF 文件"}
 
     pdf_path = DATA_DIR / filename
+    upload_token = uuid4().hex
+    temp_pdf_path = DATA_DIR / f".upload_{upload_token}.pdf"
+    backup_pdf_path = DATA_DIR / f".backup_{upload_token}.pdf"
     total_bytes = 0
-    try:
-        with pdf_path.open("wb") as buffer:
-            while chunk := await file.read(1024 * 1024):
-                total_bytes += len(chunk)
-                if total_bytes > MAX_UPLOAD_BYTES:
-                    pdf_path.unlink(missing_ok=True)
-                    return {"error": "PDF 文件不能超过 10MB"}
-                buffer.write(chunk)
 
-        if total_bytes == 0:
+    async with UPLOAD_LOCK:
+        try:
+            with temp_pdf_path.open("wb") as buffer:
+                while chunk := await file.read(1024 * 1024):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_UPLOAD_BYTES:
+                        temp_pdf_path.unlink(missing_ok=True)
+                        return {"error": "PDF 文件不能超过 10MB"}
+                    buffer.write(chunk)
+
+            if total_bytes == 0:
+                temp_pdf_path.unlink(missing_ok=True)
+                return {"error": "不能上传空文件"}
+
+            documents = PyPDFLoader(str(temp_pdf_path)).load()
+            has_text = any(
+                document.page_content and document.page_content.strip()
+                for document in documents
+            )
+            if not has_text:
+                temp_pdf_path.unlink(missing_ok=True)
+                return {"error": "PDF 中没有可读取的文字内容"}
+        except Exception:
+            temp_pdf_path.unlink(missing_ok=True)
+            return {"error": "PDF 文件损坏或无法解析"}
+
+        had_previous_file = pdf_path.exists()
+        try:
+            if had_previous_file:
+                shutil.copy2(pdf_path, backup_pdf_path)
+            os.replace(temp_pdf_path, pdf_path)
+        except Exception:
+            temp_pdf_path.unlink(missing_ok=True)
+            if backup_pdf_path.exists():
+                os.replace(backup_pdf_path, pdf_path)
+            return {"error": "PDF 文件写入磁盘失败"}
+
+        try:
+            chunk_count = await run_in_threadpool(build_index)
+        except Exception as exc:
             pdf_path.unlink(missing_ok=True)
-            return {"error": "不能上传空文件"}
+            if had_previous_file and backup_pdf_path.exists():
+                os.replace(backup_pdf_path, pdf_path)
+            return {"error": f"PDF 入库失败，已保留原索引：{exc}"}
 
-        # 提前解析一次，给损坏 PDF 或纯图片 PDF 返回清晰提示。
-        documents = PyPDFLoader(str(pdf_path)).load()
-        has_text = any(
-            document.page_content and document.page_content.strip()
-            for document in documents
-        )
-        if not has_text:
-            pdf_path.unlink(missing_ok=True)
-            return {"error": "PDF 中没有可读取的文字内容"}
-    except Exception:
-        pdf_path.unlink(missing_ok=True)
-        return {"error": "PDF 文件损坏或无法解析"}
-
-    try:
-        chunk_count = build_index()
-    except Exception as exc:
-        pdf_path.unlink(missing_ok=True)
-        return {"error": f"PDF 入库失败：{exc}"}
-
-    return {
-        "message": f"PDF 上传并入库成功，共新增 {chunk_count} 个文本片段",
-        "filename": filename,
-        "chunks": chunk_count,
-    }
+        backup_pdf_path.unlink(missing_ok=True)
+        return {
+            "message": f"PDF 上传并入库成功，共新增 {chunk_count} 个文本片段",
+            "filename": filename,
+            "chunks": chunk_count,
+            "collection": active_collection_name,
+        }
 
 
 @app.post("/ask")

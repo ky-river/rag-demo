@@ -24,13 +24,19 @@ flowchart LR
 flowchart LR
     Upload[PDF upload] --> Parse[Parse with PyPDFLoader]
     Parse --> Split[Split into 500-character chunks<br/>50-character overlap]
-    Split --> Embed[Create text-embedding-v3 vectors]
-    Split --> Tokens[Build Chinese bigram BM25 index]
-    Embed --> Chroma[(Chroma)]
-    Tokens --> BM25[(BM25)]
+    Split --> Staging[Build staging Chroma collection]
+    Split --> Tokens[Build staged Chinese bigram BM25 index]
+    Staging --> Verify{Verify chunk count}
+    Verify -->|valid| Switch[Persist active collection<br/>and swap in-memory state]
+    Verify -->|invalid| Cleanup[Delete staging collection]
+    Switch --> Chroma[(Active Chroma)]
+    Switch --> BM25[(Active BM25)]
 ```
 
-The upload endpoint rebuilds both indexes from the PDF files in `data/`.
+The upload endpoint writes the validated PDF to a temporary path, rebuilds both
+indexes in a staging collection, checks the stored chunk count, and only then
+updates the active collection pointer. A failed rebuild removes the staging
+collection and restores the previous PDF instead of damaging the active index.
 The health endpoint verifies that the Chroma collection and BM25 document
 counts agree.
 
@@ -91,6 +97,8 @@ can locate the corresponding log entries without exposing model credentials.
 
 - Model calls are isolated inside the generation and agent-routing helpers.
 - Reranker initialization and inference failures fall back to RRF ordering.
+- Index rebuilds use staged collections and switch only after count validation.
+- Concurrent retrieval waits for the index swap to complete.
 - Unsupported, empty, oversized, or unreadable uploads return explicit errors.
 - Session history is stored in SQLite with a maximum retained history length.
 - `/health` reports collection count, document count, and reranker status.

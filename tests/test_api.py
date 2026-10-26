@@ -22,6 +22,7 @@ class RequestObservabilityTest(unittest.TestCase):
             "status": "ok",
             "version": "test",
             "index_ready": True,
+            "collection_name": "rag_demo",
             "document_count": 1,
             "chunk_count": 1,
             "collection_count": 1,
@@ -241,7 +242,42 @@ class ApiEndpointTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["chunks"], 4)
+        self.assertEqual(response.json()["filename"], "knowledge.pdf")
         build.assert_called_once_with()
+
+    def test_upload_failure_restores_previous_pdf(self):
+        with TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            pdf_path = data_dir / "knowledge.pdf"
+            pdf_path.write_bytes(b"previous-pdf")
+            fake_page = SimpleNamespace(page_content="可读取的 PDF 文本")
+
+            with (
+                patch.object(main, "DATA_DIR", data_dir),
+                patch.object(main, "PyPDFLoader") as loader,
+                patch.object(
+                    main,
+                    "build_index",
+                    side_effect=RuntimeError("staging failed"),
+                ),
+            ):
+                loader.return_value.load.return_value = [fake_page]
+                response = client.post(
+                    "/upload",
+                    files={
+                        "file": (
+                            "knowledge.pdf",
+                            b"%PDF-1.4-new-content",
+                            "application/pdf",
+                        )
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("已保留原索引", response.json()["error"])
+            self.assertEqual(pdf_path.read_bytes(), b"previous-pdf")
+            self.assertEqual(list(data_dir.glob(".upload_*.pdf")), [])
+            self.assertEqual(list(data_dir.glob(".backup_*.pdf")), [])
 
     def test_upload_rejects_non_pdf(self):
         response = client.post(
