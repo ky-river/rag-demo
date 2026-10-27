@@ -17,6 +17,7 @@ def fake_vectorstore(count: int):
 
 class AtomicIndexRebuildTest(unittest.TestCase):
     def run_build(self, staging_store):
+        owner_id = "test-user"
         page = SimpleNamespace(
             page_content="索引文本",
             metadata={"filename": "project.pdf"},
@@ -27,13 +28,19 @@ class AtomicIndexRebuildTest(unittest.TestCase):
         )
         old_store = fake_vectorstore(1)
         new_bm25 = object()
+        old_workspace = main.WorkspaceIndex(
+            collection_name=main.workspace_collection_prefix(owner_id),
+            vectorstore=old_store,
+            bm25_documents=[],
+            bm25_index=None,
+        )
 
         with TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir)
             (data_dir / "project.pdf").write_bytes(b"%PDF-1.4")
             (data_dir / ".backup_project.pdf").write_bytes(b"backup")
             with (
-                patch.object(main, "DATA_DIR", data_dir),
+                patch.object(main, "workspace_data_dir", return_value=data_dir),
                 patch.object(main, "PyPDFLoader") as loader,
                 patch.object(
                     main.splitter,
@@ -46,20 +53,20 @@ class AtomicIndexRebuildTest(unittest.TestCase):
                     main,
                     "persist_active_collection_name",
                 ) as persist,
-                patch.object(main, "vectorstore", old_store),
-                patch.object(main, "active_collection_name", "rag_demo"),
-                patch.object(main, "bm25_documents", []),
-                patch.object(main, "bm25_index", None),
+                patch.dict(
+                    main.workspace_indexes,
+                    {owner_id: old_workspace},
+                    clear=True,
+                ),
             ):
                 loader.return_value.load.return_value = [page]
                 error = None
                 result = None
                 try:
-                    result = main.build_index()
+                    result = main.build_index(owner_id)
                 except Exception as exc:
                     error = exc
-                current_vectorstore = main.vectorstore
-                current_collection_name = main.active_collection_name
+                current_workspace = main.workspace_indexes[owner_id]
 
         return {
             "result": result,
@@ -68,8 +75,8 @@ class AtomicIndexRebuildTest(unittest.TestCase):
             "persist": persist,
             "new_bm25": new_bm25,
             "loader": loader,
-            "current_vectorstore": current_vectorstore,
-            "current_collection_name": current_collection_name,
+            "current_workspace": current_workspace,
+            "owner_id": owner_id,
         }
 
     def test_success_switches_collection_after_validation(self):
@@ -82,10 +89,18 @@ class AtomicIndexRebuildTest(unittest.TestCase):
         staging_store.delete_collection.assert_not_called()
         result["old_store"].delete_collection.assert_called_once_with()
         result["persist"].assert_called_once()
-        collection_name = result["persist"].call_args.args[0]
-        self.assertTrue(collection_name.startswith("rag_demo_build_"))
-        self.assertIs(result["current_vectorstore"], staging_store)
-        self.assertEqual(result["current_collection_name"], collection_name)
+        owner_id, collection_name = result["persist"].call_args.args
+        self.assertEqual(owner_id, result["owner_id"])
+        self.assertTrue(
+            collection_name.startswith(
+                f"{main.workspace_collection_prefix(owner_id)}_build_"
+            )
+        )
+        self.assertIs(result["current_workspace"].vectorstore, staging_store)
+        self.assertEqual(
+            result["current_workspace"].collection_name,
+            collection_name,
+        )
 
     def test_validation_failure_keeps_old_index(self):
         staging_store = fake_vectorstore(0)
@@ -96,8 +111,11 @@ class AtomicIndexRebuildTest(unittest.TestCase):
         staging_store.add_documents.assert_called_once()
         staging_store.delete_collection.assert_called_once_with()
         result["persist"].assert_not_called()
-        self.assertIs(result["current_vectorstore"], result["old_store"])
-        self.assertEqual(result["current_collection_name"], "rag_demo")
+        self.assertIs(result["current_workspace"].vectorstore, result["old_store"])
+        self.assertEqual(
+            result["current_workspace"].collection_name,
+            main.workspace_collection_prefix(result["owner_id"]),
+        )
 
 
 if __name__ == "__main__":

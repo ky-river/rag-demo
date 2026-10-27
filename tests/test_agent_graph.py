@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import app.main as main
 
@@ -58,13 +58,22 @@ class AgentGraphTest(unittest.TestCase):
                     ) as execute,
                 ):
                     state = main.agent_graph.invoke(
-                        {"message": "test", "history": []}
+                        {
+                            "owner_id": "owner-test",
+                            "message": "test",
+                            "history": [],
+                        }
                     )
 
                 self.assertEqual(state["tool"], tool)
                 self.assertEqual(state["routing"], "model")
                 self.assertEqual(state["answer"], expected_answer)
-                execute.assert_called_once_with(tool, arguments, [])
+                execute.assert_called_once_with(
+                    tool,
+                    arguments,
+                    [],
+                    "owner-test",
+                )
 
 
 class KnowledgeRetrievalTest(unittest.TestCase):
@@ -155,23 +164,38 @@ class KnowledgeRetrievalTest(unittest.TestCase):
         model_response = SimpleNamespace(
             choices=[SimpleNamespace(message=model_message)]
         )
+        vectorstore = SimpleNamespace()
+        vectorstore.similarity_search_with_score = Mock(
+            return_value=documents
+        )
+        workspace = main.WorkspaceIndex(
+            collection_name="rag_demo_owner",
+            vectorstore=vectorstore,
+            bm25_documents=[],
+            bm25_index=None,
+        )
 
         with (
-            patch.object(main, "bm25_index", None),
             patch.object(
-                main.vectorstore,
-                "similarity_search_with_score",
-                return_value=documents,
-            ) as search,
+                main,
+                "get_workspace_index_locked",
+                return_value=workspace,
+            ),
             patch.object(
                 main.client.chat.completions,
                 "create",
                 return_value=model_response,
             ),
         ):
-            result = main.answer_from_knowledge_base("向量数据库是什么？")
+            result = main.answer_from_knowledge_base(
+                "向量数据库是什么？",
+                owner_id="owner-test",
+            )
 
-        search.assert_called_once_with("向量数据库是什么？", k=12)
+        vectorstore.similarity_search_with_score.assert_called_once_with(
+            "向量数据库是什么？",
+            k=12,
+        )
         self.assertEqual(result["answer"], "使用 Chroma")
         self.assertEqual(len(result["sources"]), 1)
         self.assertAlmostEqual(result["sources"][0]["relevance_score"], 0.8656)
@@ -186,17 +210,29 @@ class KnowledgeRetrievalTest(unittest.TestCase):
                 1.8,
             )
         ]
+        vectorstore = SimpleNamespace()
+        vectorstore.similarity_search_with_score = Mock(
+            return_value=documents
+        )
+        workspace = main.WorkspaceIndex(
+            collection_name="rag_demo_owner",
+            vectorstore=vectorstore,
+            bm25_documents=[],
+            bm25_index=None,
+        )
 
         with (
-            patch.object(main, "bm25_index", None),
             patch.object(
-                main.vectorstore,
-                "similarity_search_with_score",
-                return_value=documents,
+                main,
+                "get_workspace_index_locked",
+                return_value=workspace,
             ),
             patch.object(main.client.chat.completions, "create") as model_call,
         ):
-            result = main.answer_from_knowledge_base("公司年收入是多少？")
+            result = main.answer_from_knowledge_base(
+                "公司年收入是多少？",
+                owner_id="owner-test",
+            )
 
         self.assertEqual(result, {"answer": "当前资料中没有找到答案", "sources": []})
         model_call.assert_not_called()
@@ -211,17 +247,28 @@ class KnowledgeRetrievalTest(unittest.TestCase):
             page_content="SQLite 会话存储",
         )
         fake_index = SimpleNamespace(get_scores=lambda tokens: [0.0, 5.0])
+        vectorstore = SimpleNamespace()
+        vectorstore.similarity_search_with_score = Mock(
+            return_value=[(vector_document, 0.1)]
+        )
+        workspace = main.WorkspaceIndex(
+            collection_name="rag_demo_owner",
+            vectorstore=vectorstore,
+            bm25_documents=[vector_document, lexical_document],
+            bm25_index=fake_index,
+        )
 
         with (
-            patch.object(main, "bm25_index", fake_index),
-            patch.object(main, "bm25_documents", [vector_document, lexical_document]),
             patch.object(
-                main.vectorstore,
-                "similarity_search_with_score",
-                return_value=[(vector_document, 0.1)],
+                main,
+                "get_workspace_index_locked",
+                return_value=workspace,
             ),
         ):
-            _, sources = main.retrieve_knowledge("多轮会话保存在哪里？")
+            _, sources = main.retrieve_knowledge(
+                "多轮会话保存在哪里？",
+                "owner-test",
+            )
 
         methods = {source["retrieval_method"] for source in sources}
         self.assertEqual(methods, {"vector", "bm25"})

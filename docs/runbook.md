@@ -8,7 +8,8 @@
 | --- | --- |
 | 网页前端 | http://127.0.0.1:5501 |
 | 后端 API | http://127.0.0.1:8000 |
-| 健康检查 | http://127.0.0.1:8000/health |
+| 服务健康检查 | http://127.0.0.1:8000/health |
+| 用户工作区健康检查 | http://127.0.0.1:8000/workspace/health |
 
 ## 每次启动
 
@@ -29,7 +30,8 @@ open http://127.0.0.1:5501
 - `docker compose ps` 中 `backend` 和 `frontend` 均显示 `healthy`。
 - `/health` 返回 `status` 为 `ok`。
 - `/health` 返回 `index_ready` 为 `true`。
-- 网页右上角显示“服务与索引正常”。
+- 网页先显示登录页；创建账号后进入个人工作区。
+- 网页右上角显示当前邮箱和“个人工作区已连接”。
 
 如果服务已经启动，只需要执行：
 
@@ -39,6 +41,13 @@ open http://127.0.0.1:5501
 ```
 
 ## 功能验收
+
+### 0. 登录与数据隔离
+
+首次进入网页时创建一个测试账号。登录后上传一份知识库 PDF，再退出并创建第二个
+测试账号。第二个账号的文档列表应为空，证明 PDF 目录、Chroma 集合、BM25 索引和
+会话记录都按用户隔离。演示结束后可以保留测试账号，也可以删除 `sessions.sqlite3`
+和 `data/users` 重新开始。
 
 ### 1. 知识库问答
 
@@ -132,17 +141,64 @@ open http://127.0.0.1:5501
 
 演示时只使用合成简历和公开或自拟的岗位 JD，不要上传真实个人敏感信息。
 
+### 5. 评测报告
+
+使用一个独立的评测账号，登录后上传以下两份测试文档：
+
+```text
+data/rag_project_document.pdf
+data/AI实习生_个人简历_测试.pdf
+```
+
+进入“检索评测”，点击“运行检索评测”。页面会直接使用当前登录账号的知识库执行
+40 个问题，不需要复制 `access_token`。验收时应看到：
+
+- Hit@1、Hit@4、MRR 和无答案拒答率
+- 项目、简历和拒答三个分类的指标
+- 平均延迟、P50 和 P95 延迟
+- 失败问题明细
+- 可用的“下载 JSON 报告”和“下载 Markdown 报告”按钮
+
+当前测试语料上的参考结果为 Hit@1 `24/30 (80.0%)`、Hit@4 `30/30 (100.0%)`、
+MRR `0.886`、无答案拒答 `10/10 (100.0%)`、平均延迟约 `226 ms`。延迟会随机器、
+网络和模型状态变化。
+
+需要批量回归或编写 CI 时，也可以在终端运行命令行评测。登录并设置 Token 后，在项目
+目录执行：
+
+```bash
+cd ~/Desktop/rag-demo
+source .venv/bin/activate
+export RAG_API_TOKEN="粘贴 access_token"
+
+python eval/run_retrieval_eval.py \
+  --suite extended \
+  --api-url http://127.0.0.1:8000/search
+RAG_API_BASE_URL=http://127.0.0.1:8000 python eval/run_eval.py
+```
+
+每次运行会在 `eval/reports/` 生成同时间戳的 JSON 和 Markdown 报告。报告包含：
+
+- Hit@1、Hit@4、MRR
+- 无答案拒答正确率
+- 各分类指标和失败问题明细
+- 平均延迟、P50 和 P95 延迟
+
+只查看终端结果、不生成文件时增加 `--no-report`。网页内评测的报告由浏览器下载，
+命令行评测的报告写入 `eval/reports/`。不要把 `RAG_API_TOKEN`、`.env` 或包含
+真实用户数据的评测报告提交到 GitHub。
+
 ## 推荐演示顺序
 
 完整演示控制在 2 到 3 分钟：
 
-1. 展示网页首页和服务状态。
+1. 展示登录页和用户级工作区。
 2. 提出一个知识库问题，展示答案、文件名和页码。
 3. 提出一个无依据问题，展示拒答和不返回无关来源。
 4. 运行一次 Agent 学习计划任务，展示路由结果。
 5. 上传简历与 JD，展示匹配度、技能缺口和学习计划。
-6. 展示 `/health`、两个 `healthy` 容器和 GitHub Actions。
-7. 简要说明 Chroma、BM25、RRF 和可选重排的流程。
+6. 展示 `/workspace/health`、两个 `healthy` 容器和 GitHub Actions。
+7. 简要说明 Token 鉴权、用户隔离、Chroma、BM25、RRF 和可选重排的流程。
 
 详细口播脚本见 `docs/demo-script.md`。
 
@@ -217,6 +273,24 @@ docker compose logs --tail=100
 Command + Shift + R
 ```
 
+### 请求返回 429
+
+登录、模型调用、上传和删除分别有每分钟配额。响应中的 `Retry-After` 和
+`retry_after_seconds` 表示需要等待的秒数。可以修改 `.env` 中以下变量：
+
+```text
+AUTH_RATE_LIMIT_PER_MINUTE=10
+MODEL_RATE_LIMIT_PER_MINUTE=30
+WRITE_RATE_LIMIT_PER_MINUTE=10
+```
+
+演示环境不要设置得过大；设为 `0` 可关闭对应限制。
+
+### 上传提示文件内容不是有效的 PDF
+
+系统会检查文件头，而不只检查扩展名。将 Word、图片或文本文件直接改名为 `.pdf`
+会被拒绝。请先使用真实的 PDF 导出流程；扫描件还需要先做 OCR。
+
 ### 模型请求较慢或超时
 
 简历匹配和 Agent 任务需要多次模型调用，通常等待 20 到 60 秒属于正常范围。
@@ -251,6 +325,7 @@ git status --short
 - 使用 1280x720 或更高的浏览器窗口。
 - 关闭与演示无关的标签页和通知。
 - 不展示 API Key、环境变量、真实简历或私人岗位文件。
+- 提前创建演示账号并确认退出后其他账号看不到该账号的文档。
 - 提前确认两个容器为 `healthy`。
 - 提前准备好测试简历和测试 JD。
 - 把演示视频控制在 3 分钟以内。

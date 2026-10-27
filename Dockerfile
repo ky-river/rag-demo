@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 \
     --index-url "$PIP_INDEX_URL" -r requirements.txt
 
 COPY app ./app
+COPY eval ./eval
 COPY data ./data
 COPY .env.example ./.env.example
 

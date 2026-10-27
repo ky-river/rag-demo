@@ -5,9 +5,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-REST%20API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-一个面向内部知识检索和求职准备的 RAG + Agent 可运行项目。系统支持带来源引用的
-文档问答、无依据问题拒答、简历与岗位 JD 匹配、技能缺口分析、学习计划生成和多轮
-会话。
+一个面向内部知识检索和求职准备的 RAG + Agent 可运行项目。系统支持账号登录、
+用户级数据隔离、带来源引用的文档问答、无依据问题拒答、简历与岗位 JD 匹配、
+技能缺口分析、学习计划生成和多轮会话。
 
 项目使用 FastAPI、LangGraph、Chroma、BM25 和通义千问 OpenAI 兼容接口，附带
 40 题检索评测、离线回归测试、Docker Compose 和 GitHub Actions。
@@ -36,11 +36,16 @@ docker compose ps
 curl -sS http://127.0.0.1:8000/health
 ```
 
-浏览器打开 `http://127.0.0.1:5501`。完整的启动、验收、停止和排错步骤见
+浏览器打开 `http://127.0.0.1:5501`，先创建一个账号再进入个人工作区。
+每个账号独立保存 PDF、Chroma 集合、BM25 索引和会话记录。完整的启动、验收、停止和排错步骤见
 [`docs/runbook.md`](docs/runbook.md)。
 
 ## 核心能力
 
+- 邮箱 + 密码登录，API 使用 Bearer Token 鉴权
+- 用户级 PDF 目录、Chroma 集合、BM25 索引和 SQLite 会话隔离
+- 登录、模型调用和写操作分别使用滑动窗口限流
+- PDF 扩展名、文件名长度和真实文件头三层上传校验
 - PDF 知识库问答
 - 上传 PDF 后在临时集合中重建双索引，校验成功后原子切换
 - 查看已入库文档的片段数、大小和更新时间，并安全删除后自动重建索引
@@ -54,6 +59,8 @@ curl -sS http://127.0.0.1:8000/health
 - 匹配报告下载
 - LangGraph Agent 意图路由：知识库问答、学习计划、简历/JD 匹配
 - SQLite 持久化多轮会话
+- 登录后一键运行 40 题检索评测，并下载 JSON/Markdown 报告
+- 标准库 `scrypt` 密码哈希与短期登录令牌
 
 ## 技术栈
 
@@ -73,7 +80,7 @@ curl -sS http://127.0.0.1:8000/health
 ## 项目结构
 
 ```text
-app/                 FastAPI、Agent、检索、索引与模型调用
+app/                 FastAPI、认证、Agent、检索、索引与模型调用
 frontend/            原生 HTML/CSS/JavaScript 工作台
 eval/                检索、回答、Agent、工具路由和异常测试
 tests/               不依赖外部模型的离线回归测试
@@ -109,6 +116,24 @@ curl -sS http://127.0.0.1:8000/health
 ```
 
 返回 `status=ok` 表示 Chroma 与 BM25 的片段数一致，索引可以正常提供服务。
+
+### 账号与 API 调试
+
+网页会自动保存登录状态。使用 `curl` 调试受保护接口时，先获取令牌：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@example.com","password":"password123"}'
+```
+
+响应中的 `access_token` 用于后续请求：
+
+```bash
+export RAG_API_TOKEN="粘贴 access_token"
+curl -sS http://127.0.0.1:8000/workspace/health \
+  -H "Authorization: Bearer $RAG_API_TOKEN"
+```
 
 常用本地命令：
 
@@ -182,20 +207,27 @@ PDF 上传 -> PDF 文本解析 -> RecursiveCharacterTextSplitter 切分
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| `POST` | `/auth/register` | 创建账号并获取 Bearer Token |
+| `POST` | `/auth/login` | 登录并获取 Bearer Token |
+| `GET` | `/auth/me` | 查看当前账号 |
+| `POST` | `/auth/logout` | 注销当前令牌 |
 | `GET` | `/health` | 检查索引完整性、文档数和重排状态 |
+| `GET` | `/workspace/health` | 检查当前用户索引状态 |
 | `POST` | `/agent-graph` | LangGraph Agent 主入口 |
 | `POST` | `/search` | 混合检索与调试 |
-| `GET` | `/documents` | 查看已入库文档和索引片段统计 |
+| `GET` | `/documents` | 查看当前用户的文档和索引片段统计 |
 | `POST` | `/upload` | 上传 PDF 并重建双索引 |
 | `DELETE` | `/documents/{filename}` | 删除 PDF 并原子重建索引 |
 | `POST` | `/match` | 简历与岗位 JD 匹配 |
 | `POST` | `/study-plan` | 根据技能缺口生成学习计划 |
+| `POST` | `/eval/retrieval` | 在当前用户知识库上运行检索评测 |
 
 快速检查检索：
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8000/search \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RAG_API_TOKEN" \
   -d '{"question":"相关性阈值是多少？"}'
 ```
 
@@ -208,10 +240,17 @@ curl -sS -X POST http://127.0.0.1:8000/search \
 | `MODEL_TIMEOUT_SECONDS` | `60` | 单次模型请求超时时间 |
 | `MODEL_MAX_RETRIES` | `1` | 超时或临时错误后的最大重试次数 |
 | `LOG_LEVEL` | `INFO` | 应用 JSON 日志级别 |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | `10` | 每个来源地址每分钟登录/注册次数 |
+| `MODEL_RATE_LIMIT_PER_MINUTE` | `30` | 每个用户每分钟模型或检索请求数 |
+| `WRITE_RATE_LIMIT_PER_MINUTE` | `10` | 每个用户每分钟上传/删除次数 |
 
 每个 HTTP 请求都会生成或复用合法的 `X-Request-ID`，并通过同名响应头返回。
 应用以 JSON 记录请求耗时、状态码、模型操作、模型耗时和错误类型。模型请求超时时，
 接口返回 `504`，响应中包含错误说明和 `request_id`，便于直接定位后端日志。
+
+登录、模型和写操作采用单实例滑动窗口限流。超过配额时返回 `429`、
+`Retry-After` 和 `retry_after_seconds`；多实例部署时可将同一个限流接口替换为
+Redis 实现。所有响应同时添加 `nosniff`、禁止 iframe 和浏览器权限限制等安全响应头。
 
 ```json
 {
@@ -262,7 +301,7 @@ curl -sS -X POST http://127.0.0.1:8000/search \
 - Agent 工具选择：5/5
 - 模型主动选择工具：5/5
 - 异常场景：4/4
-- 离线回归测试：25/25
+- 离线回归测试：41/41
 
 延迟为本地开发环境结果，会随网络、模型服务和机器状态变化。当前评测语料规模较小，
 这些数字用于验证检索与重排改动是否有效，不代表生产环境泛化能力。
@@ -272,19 +311,35 @@ curl -sS -X POST http://127.0.0.1:8000/search \
 ```bash
 python eval/run_retrieval_eval.py \
   --suite extended \
-  --api-url http://127.0.0.1:8003/search
-
+  --api-url http://127.0.0.1:8002/search
 RAG_API_BASE_URL=http://127.0.0.1:8002 python eval/run_eval.py
 RAG_API_BASE_URL=http://127.0.0.1:8002 python eval/run_agent_eval.py
 RAG_API_BASE_URL=http://127.0.0.1:8002 python eval/run_tool_eval.py
 RAG_API_BASE_URL=http://127.0.0.1:8002 python eval/run_error_eval.py
 ```
 
+登录网页后进入“检索评测”，点击“运行检索评测”即可直接检查当前账号的知识库，
+不需要从开发者工具复制 Bearer Token。页面会展示核心指标、分类指标和失败明细，
+运行完成后可下载 JSON 或 Markdown 报告。
+
 `run_retrieval_eval.py` 支持 `smoke` 和 `extended` 两套检索集，独立检查检索排名，
 不调用生成模型。
 `run_eval.py` 同时检查回答正确性和引用证据，要求有答案的问题命中预期文件和关键词，
 并要求无答案的问题返回空 `sources`。
 `run_tool_eval.py` 会检查 LangGraph 工作流中的工具名称，并单独统计模型主动选择工具的比例。
+这些脚本读取环境变量 `RAG_API_TOKEN`，会自动为受保护接口添加 Bearer Token。
+`run_retrieval_eval.py` 和 `run_eval.py` 默认还会在 `eval/reports/` 生成同时间的
+JSON 与 Markdown 报告，包含分类指标、失败明细、平均延迟、P50 和 P95 延迟。
+可以用 `--report-dir` 指定输出目录，或用 `--no-report` 只查看终端结果。
+
+使用命令行评测时，评测账号中应先上传 `data/rag_project_document.pdf` 和
+`data/AI实习生_个人简历_测试.pdf`，登录并设置 Token 后执行：
+
+```bash
+export RAG_API_TOKEN="登录后获取的 access_token"
+python eval/run_retrieval_eval.py --suite extended
+python eval/run_eval.py
+```
 
 不调用外部模型的路由回归测试：
 
@@ -298,6 +353,7 @@ python -m unittest discover -s tests -t . -v
 ## 项目亮点
 
 - 上传后先构建临时 Chroma 集合，校验片段数后再切换；失败时保留旧索引和旧 PDF。
+- 登录后按用户隔离 PDF 目录、向量集合、BM25 索引和会话；跨账号无法读取或覆盖会话。
 - 文档删除失败时自动恢复 PDF 和旧索引，避免管理操作破坏在线检索。
 - 使用中文 bigram + 加权 RRF 补齐精确术语召回，扩展集 Hit@4 达到 30/30。
 - 用 40 题检索集量化重排收益：Hit@1 从 24/30 提升到 28/30。
@@ -307,7 +363,6 @@ python -m unittest discover -s tests -t . -v
 
 ## 后续计划
 
-- 完善用户登录和数据隔离
 - 增加重排服务缓存、并发控制和更多领域评测集
-- 将 JSON 日志接入集中式日志平台并增加指标看板
+- 将 JSON 日志和评测报告接入前端指标看板
 - Docker 部署到 Linux 云服务器

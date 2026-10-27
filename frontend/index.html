@@ -149,6 +149,120 @@
       box-shadow: 0 0 0 3px rgba(239, 125, 125, 0.14);
     }
 
+    .header-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .user-badge {
+      max-width: 220px;
+      overflow: hidden;
+      color: #d8e5e8;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .button.header-button {
+      min-height: 34px;
+      padding: 6px 11px;
+      color: #e7f0f2;
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(255, 255, 255, 0.18);
+      font-size: 12px;
+    }
+
+    .button.header-button:hover {
+      background: rgba(255, 255, 255, 0.13);
+    }
+
+    .auth-gate {
+      display: grid;
+      min-height: 100vh;
+      padding: 24px;
+      place-items: center;
+      background: #17252f;
+    }
+
+    .auth-panel {
+      width: min(430px, 100%);
+      padding: 32px;
+      background: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgba(5, 18, 24, 0.28);
+    }
+
+    .auth-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .auth-brand .brand-mark {
+      color: #ffffff;
+      background: var(--accent);
+    }
+
+    .auth-brand strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .auth-brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .auth-panel h2 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .auth-panel > p {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .text-input {
+      width: 100%;
+      min-height: 42px;
+      padding: 9px 12px;
+      color: var(--text);
+      background: var(--surface-muted);
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+    }
+
+    .text-input:focus {
+      background: var(--surface);
+      border-color: var(--accent);
+    }
+
+    .auth-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .auth-message {
+      min-height: 20px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .auth-message.is-error {
+      color: var(--danger);
+    }
+
     .shell {
       display: grid;
       grid-template-columns: 248px minmax(0, 1fr);
@@ -931,6 +1045,15 @@
         padding: 12px 16px;
       }
 
+      .header-actions {
+        display: grid;
+        justify-items: end;
+      }
+
+      .user-badge {
+        max-width: 140px;
+      }
+
       .brand p {
         display: none;
       }
@@ -1049,6 +1172,14 @@
         padding: 5px 9px;
         font-size: 11px;
       }
+
+      .auth-panel {
+        padding: 24px 20px;
+      }
+
+      .auth-actions {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1062,7 +1193,51 @@
   <script src="./config.js"></script>
 </head>
 <body>
-  <header class="app-header">
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
+    <div class="auth-panel">
+      <div class="auth-brand">
+        <div class="brand-mark" aria-hidden="true">R</div>
+        <div>
+          <strong>RAG 求职工作台</strong>
+          <span>个人知识库 · Agent · 简历分析</span>
+        </div>
+      </div>
+      <h2 id="authTitle">进入个人工作区</h2>
+      <p>每个账号拥有独立的文档、向量索引和会话记录。</p>
+      <form id="authForm">
+        <label class="field">
+          <span class="field-label">邮箱</span>
+          <input
+            id="authEmail"
+            class="text-input"
+            type="email"
+            autocomplete="email"
+            placeholder="name@example.com"
+            required
+          >
+        </label>
+        <label class="field">
+          <span class="field-label">密码</span>
+          <input
+            id="authPassword"
+            class="text-input"
+            type="password"
+            autocomplete="current-password"
+            minlength="8"
+            placeholder="至少 8 位"
+            required
+          >
+        </label>
+        <div class="auth-actions">
+          <button id="loginButton" class="button" type="submit">登录</button>
+          <button id="registerButton" class="button secondary" type="button">创建账号</button>
+        </div>
+      </form>
+      <p id="authMessage" class="auth-message" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <header id="appHeader" class="app-header" hidden>
     <div class="brand">
       <div class="brand-mark" aria-hidden="true">R</div>
       <div class="brand-copy">
@@ -1070,13 +1245,17 @@
         <p>知识检索 · Agent 路由 · 简历分析</p>
       </div>
     </div>
-    <div id="serviceState" class="service-state" role="status" aria-live="polite">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span id="serviceStateText">正在检查服务</span>
+    <div class="header-actions">
+      <span id="currentUser" class="user-badge"></span>
+      <div id="serviceState" class="service-state" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="serviceStateText">正在检查服务</span>
+      </div>
+      <button id="logoutButton" class="button header-button" type="button">退出</button>
     </div>
   </header>
 
-  <div class="shell">
+  <div id="appShell" class="shell" hidden>
     <aside class="sidebar" aria-label="工作区导航">
       <p class="nav-label">工作区</p>
       <nav class="nav-list">
@@ -1106,6 +1285,13 @@
           <span>
             <span class="nav-text">简历匹配</span>
             <span class="nav-caption">岗位分析与学习计划</span>
+          </span>
+        </button>
+        <button class="nav-item" type="button" data-page="evaluation" aria-selected="false">
+          <span class="nav-index">05</span>
+          <span>
+            <span class="nav-text">检索评测</span>
+            <span class="nav-caption">召回指标与延迟报告</span>
           </span>
         </button>
       </nav>
@@ -1246,6 +1432,72 @@
         </section>
       </section>
 
+      <section id="page-evaluation" class="page" aria-labelledby="evaluationTitle" hidden>
+        <div class="page-header">
+          <div>
+            <p class="eyebrow">Retrieval evaluation</p>
+            <h2 id="evaluationTitle">检索评测</h2>
+            <p>使用当前账号的文档运行固定测试集，量化召回质量、拒答能力和延迟。</p>
+          </div>
+          <button id="runEvaluation" class="button" type="button">运行检索评测</button>
+        </div>
+
+        <section class="surface" aria-labelledby="evaluationSummaryTitle">
+          <div class="section-heading documents-heading">
+            <div>
+              <h3 id="evaluationSummaryTitle">评测报告</h3>
+              <p id="evaluationStatus">尚未运行评测</p>
+            </div>
+          </div>
+          <div id="evaluationEmpty" class="empty-state">
+            点击“运行检索评测”，系统会执行 40 个固定问题。
+          </div>
+          <div id="evaluationOutput" hidden>
+            <div class="document-table-wrap">
+              <table class="document-table">
+                <thead>
+                  <tr>
+                    <th scope="col">指标</th>
+                    <th scope="col">结果</th>
+                  </tr>
+                </thead>
+                <tbody id="evaluationMetrics"></tbody>
+              </table>
+            </div>
+
+            <div class="section-heading" style="margin-top: 24px;">
+              <h3>分类指标</h3>
+            </div>
+            <div class="document-table-wrap">
+              <table class="document-table">
+                <thead>
+                  <tr>
+                    <th scope="col">分类</th>
+                    <th scope="col">指标</th>
+                    <th scope="col">结果</th>
+                  </tr>
+                </thead>
+                <tbody id="evaluationCategories"></tbody>
+              </table>
+            </div>
+
+            <div class="section-heading" style="margin-top: 24px;">
+              <h3>失败明细</h3>
+            </div>
+            <div id="evaluationFailures"></div>
+
+            <div class="action-row">
+              <button id="downloadEvaluationJson" class="button secondary" type="button" disabled>
+                下载 JSON 报告
+              </button>
+              <button id="downloadEvaluationMarkdown" class="button secondary" type="button" disabled>
+                下载 Markdown 报告
+              </button>
+            </div>
+          </div>
+        </section>
+      </section>
+
       <section id="page-match" class="page" aria-labelledby="matchTitle" hidden>
         <div class="page-header">
           <div>
@@ -1321,9 +1573,12 @@
 
   <script>
     const state = {
+      authToken: localStorage.getItem("rag_auth_token") || "",
+      currentUser: null,
       latestAnalysis: null,
       latestStudyPlan: null,
       latestGaps: [],
+      latestEvaluation: null,
       agentSessionId: null,
       documents: [],
     };
@@ -1333,6 +1588,7 @@
       agent: ["Agent routing", "求职 Agent"],
       documents: ["Document ingestion", "文档管理"],
       match: ["Resume analysis", "简历与岗位匹配"],
+      evaluation: ["Retrieval evaluation", "检索评测"],
     };
 
     const elements = {};
@@ -1342,14 +1598,24 @@
       bindNavigation();
       bindActions();
       bindFileInputs();
-      refreshHealth();
-      refreshDocumentsPage();
+      initializeAuth();
     });
 
     function cacheElements() {
       [
         "serviceState",
         "serviceStateText",
+        "authGate",
+        "authForm",
+        "authEmail",
+        "authPassword",
+        "authMessage",
+        "loginButton",
+        "registerButton",
+        "logoutButton",
+        "currentUser",
+        "appHeader",
+        "appShell",
         "indexSummary",
         "indexDetail",
         "askForm",
@@ -1399,6 +1665,15 @@
         "studyPlan",
         "studyPlanGoal",
         "studyPlanWeeks",
+        "runEvaluation",
+        "evaluationStatus",
+        "evaluationEmpty",
+        "evaluationOutput",
+        "evaluationMetrics",
+        "evaluationCategories",
+        "evaluationFailures",
+        "downloadEvaluationJson",
+        "downloadEvaluationMarkdown",
       ].forEach((id) => {
         elements[id] = document.getElementById(id);
       });
@@ -1433,6 +1708,13 @@
     }
 
     function bindActions() {
+      elements.authForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        authenticate(false);
+      });
+      elements.registerButton.addEventListener("click", () => authenticate(true));
+      elements.logoutButton.addEventListener("click", logout);
+
       elements.askForm.addEventListener("submit", (event) => {
         event.preventDefault();
         askKnowledgeBase();
@@ -1452,6 +1734,13 @@
 
       elements.uploadButton.addEventListener("click", uploadPdf);
       elements.documentRows.addEventListener("click", handleDocumentAction);
+      elements.runEvaluation.addEventListener("click", runEvaluation);
+      elements.downloadEvaluationJson.addEventListener("click", () => {
+        downloadEvaluation("json");
+      });
+      elements.downloadEvaluationMarkdown.addEventListener("click", () => {
+        downloadEvaluation("markdown");
+      });
       elements.matchForm.addEventListener("submit", (event) => {
         event.preventDefault();
         matchResume();
@@ -1482,8 +1771,123 @@
       });
     }
 
+    async function initializeAuth() {
+      if (!state.authToken) {
+        showAuthGate();
+        return;
+      }
+
+      showAuthGate("正在恢复登录状态...");
+      try {
+        const data = await requestJson("/auth/me", { cache: "no-store" });
+        await enterWorkspace(data.user);
+      } catch (error) {
+        clearAuthState();
+        showAuthGate("登录状态已过期，请重新登录", true);
+      }
+    }
+
+    async function authenticate(createAccount) {
+      const email = elements.authEmail.value.trim();
+      const password = elements.authPassword.value;
+      if (!email || !password) {
+        showAuthMessage("请输入邮箱和密码", true);
+        return;
+      }
+
+      const button = createAccount ? elements.registerButton : elements.loginButton;
+      const defaultLabel = createAccount ? "创建账号" : "登录";
+      button.disabled = true;
+      button.textContent = createAccount ? "正在创建..." : "正在登录...";
+      showAuthMessage(createAccount ? "正在创建个人工作区..." : "正在验证账号...");
+
+      try {
+        const data = await requestJson(
+          createAccount ? "/auth/register" : "/auth/login",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+          },
+        );
+        state.authToken = data.access_token;
+        state.currentUser = data.user;
+        localStorage.setItem("rag_auth_token", state.authToken);
+        elements.authPassword.value = "";
+        await enterWorkspace(data.user);
+      } catch (error) {
+        showAuthMessage(error.message, true);
+      } finally {
+        button.disabled = false;
+        button.textContent = defaultLabel;
+      }
+    }
+
+    async function enterWorkspace(user) {
+      state.currentUser = user;
+      state.agentSessionId = null;
+      state.latestAnalysis = null;
+      state.latestStudyPlan = null;
+      state.latestGaps = [];
+      state.latestEvaluation = null;
+      elements.currentUser.textContent = user.email || "";
+      elements.currentUser.title = user.email || "";
+      elements.authGate.hidden = true;
+      elements.appHeader.hidden = false;
+      elements.appShell.hidden = false;
+      elements.authMessage.textContent = "";
+      elements.authMessage.classList.remove("is-error");
+      document.title = "知识库问答 | RAG 求职工作台";
+      await Promise.all([refreshHealth(), refreshDocumentsPage()]);
+    }
+
+    async function logout() {
+      elements.logoutButton.disabled = true;
+      try {
+        await requestJson("/auth/logout", { method: "POST" });
+      } catch (error) {
+        // Local state still needs to be cleared if the server is unreachable.
+      } finally {
+        clearAuthState();
+        elements.logoutButton.disabled = false;
+        showAuthGate("已退出登录");
+      }
+    }
+
+    function clearAuthState() {
+      localStorage.removeItem("rag_auth_token");
+      state.authToken = "";
+      state.currentUser = null;
+      state.agentSessionId = null;
+      state.documents = [];
+      state.latestAnalysis = null;
+      state.latestStudyPlan = null;
+      state.latestGaps = [];
+      state.latestEvaluation = null;
+    }
+
+    function showAuthGate(message = "", isError = false) {
+      elements.appHeader.hidden = true;
+      elements.appShell.hidden = true;
+      elements.authGate.hidden = false;
+      showAuthMessage(message, isError);
+      setTimeout(() => elements.authEmail.focus(), 0);
+    }
+
+    function showAuthMessage(message, isError = false) {
+      elements.authMessage.textContent = message || "";
+      elements.authMessage.classList.toggle("is-error", Boolean(isError));
+    }
+
     async function requestJson(path, options = {}) {
-      const response = await fetch(`${window.getRagApiBaseUrl()}${path}`, options);
+      const headers = new Headers(options.headers || {});
+      if (state.authToken) {
+        headers.set("Authorization", `Bearer ${state.authToken}`);
+      }
+      const response = await fetch(`${window.getRagApiBaseUrl()}${path}`, {
+        ...options,
+        headers,
+      });
       let data = {};
       try {
         data = await response.json();
@@ -1491,24 +1895,38 @@
         data = {};
       }
       if (!response.ok || data.error) {
-        const message = data.error || data.message || `请求失败 (${response.status})`;
+        const message =
+          data.error ||
+          data.detail ||
+          data.message ||
+          `请求失败 (${response.status})`;
+        const retryHint = data.retry_after_seconds
+          ? `（${data.retry_after_seconds} 秒后可重试）`
+          : "";
         const requestId = data.request_id ? `（请求 ID: ${data.request_id}）` : "";
-        throw new Error(`${message}${requestId}`);
+        if (response.status === 401 && state.authToken) {
+          clearAuthState();
+          showAuthGate("登录状态已过期，请重新登录", true);
+        }
+        throw new Error(`${message}${retryHint}${requestId}`);
       }
       return data;
     }
 
     async function refreshHealth() {
+      if (!state.authToken) {
+        return;
+      }
       elements.serviceState.classList.remove("is-online", "is-offline");
       elements.serviceStateText.textContent = "正在检查服务";
       elements.indexSummary.textContent = "索引状态读取中";
       elements.indexDetail.textContent = "正在连接 RAG API";
 
       try {
-        const data = await requestJson("/health", { cache: "no-store" });
+        const data = await requestJson("/workspace/health", { cache: "no-store" });
         const isReady = Boolean(data.index_ready);
         elements.serviceState.classList.add(isReady ? "is-online" : "is-offline");
-        elements.serviceStateText.textContent = isReady ? "服务与索引正常" : "索引暂不可用";
+        elements.serviceStateText.textContent = isReady ? "个人工作区已连接" : "索引暂不可用";
         elements.indexSummary.textContent = `${numberOrZero(data.document_count)} 个文档`;
         elements.indexDetail.textContent =
           `${numberOrZero(data.chunk_count)} 个片段 · 版本 ${data.version || "-"}`;
@@ -1649,6 +2067,9 @@
     }
 
     async function refreshDocumentsPage() {
+      if (!state.authToken) {
+        return;
+      }
       elements.documentEmpty.hidden = false;
       elements.documentEmpty.textContent = "正在读取文档列表...";
       elements.documentTableWrap.hidden = true;
@@ -1704,6 +2125,134 @@
       }).join("");
       elements.documentEmpty.hidden = true;
       elements.documentTableWrap.hidden = false;
+    }
+
+    async function runEvaluation() {
+      setLoading(elements.runEvaluation, true, "评测运行中...");
+      elements.evaluationEmpty.hidden = false;
+      elements.evaluationEmpty.textContent = "正在执行 40 个检索问题，请稍候...";
+      elements.evaluationOutput.hidden = true;
+      showStatus(elements.evaluationStatus, "正在运行 extended 检索评测");
+
+      try {
+        const report = await requestJson("/eval/retrieval", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ suite: "extended" }),
+        });
+        state.latestEvaluation = report;
+        renderEvaluation(report);
+      } catch (error) {
+        state.latestEvaluation = null;
+        elements.evaluationEmpty.hidden = false;
+        elements.evaluationEmpty.textContent = error.message || "评测运行失败";
+        showStatus(elements.evaluationStatus, "评测失败", true);
+      } finally {
+        setLoading(elements.runEvaluation, false);
+      }
+    }
+
+    function renderEvaluation(report) {
+      state.latestEvaluation = report;
+      const statusText = report.status === "passed" ? "通过" : "存在未通过用例";
+      const generatedAt = formatDate(report.generated_at);
+      showStatus(
+        elements.evaluationStatus,
+        `${statusText} · ${generatedAt}`,
+        report.status !== "passed",
+      );
+
+      const metrics = Array.isArray(report.metrics) ? report.metrics : [];
+      elements.evaluationMetrics.innerHTML = metrics.map((metric) => `
+        <tr>
+          <td>${escapeHtml(metric.name || "-")}</td>
+          <td class="document-meta-value">${escapeHtml(metric.value || "-")}</td>
+        </tr>`).join("");
+
+      const categoryRows = [];
+      for (const category of report.categories || []) {
+        for (const metric of category.metrics || []) {
+          categoryRows.push(`
+            <tr>
+              <td>${escapeHtml(category.name || "-")}</td>
+              <td>${escapeHtml(metric.name || "-")}</td>
+              <td class="document-meta-value">${escapeHtml(metric.value || "-")}</td>
+            </tr>`);
+        }
+      }
+      elements.evaluationCategories.innerHTML = categoryRows.join("") || `
+        <tr><td colspan="3">暂无分类指标</td></tr>`;
+
+      const failures = Array.isArray(report.failures)
+        ? report.failures.map((item) => `${item.question}：${item.reason}`)
+        : [];
+      elements.evaluationFailures.innerHTML = renderListMarkup(
+        failures,
+        "没有失败用例。",
+      );
+
+      elements.evaluationEmpty.hidden = true;
+      elements.evaluationOutput.hidden = false;
+      elements.downloadEvaluationJson.disabled = false;
+      elements.downloadEvaluationMarkdown.disabled = false;
+    }
+
+    function evaluationMarkdown(report) {
+      const statusLabel = report.status === "passed" ? "通过" : "未通过";
+      const lines = [
+        `# ${report.title || "RAG 检索评测报告"}`,
+        "",
+        `- 状态：${statusLabel}`,
+        `- 生成时间：${report.generated_at || "-"}`,
+        "",
+        "## 核心指标",
+        "",
+        "| 指标 | 结果 |",
+        "| --- | --- |",
+      ];
+      for (const metric of report.metrics || []) {
+        lines.push(`| ${metric.name || "-"} | ${metric.value || "-"} |`);
+      }
+      lines.push("", "## 分类指标", "");
+      for (const category of report.categories || []) {
+        for (const metric of category.metrics || []) {
+          lines.push(`- ${category.name || "-"} · ${metric.name || "-"}：${metric.value || "-"}`);
+        }
+      }
+      lines.push("", "## 失败明细", "");
+      const failures = report.failures || [];
+      if (!failures.length) {
+        lines.push("无。");
+      } else {
+        failures.forEach((item, index) => {
+          lines.push(`${index + 1}. ${item.question}：${item.reason}`);
+        });
+      }
+      return lines.join("\n") + "\n";
+    }
+
+    function downloadEvaluation(format) {
+      if (!state.latestEvaluation) {
+        showStatus(elements.evaluationStatus, "请先运行一次检索评测", true);
+        return;
+      }
+
+      const isJson = format === "json";
+      const content = isJson
+        ? JSON.stringify(state.latestEvaluation, null, 2)
+        : evaluationMarkdown(state.latestEvaluation);
+      const blob = new Blob([content], {
+        type: isJson ? "application/json;charset=utf-8" : "text/markdown;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      link.href = url;
+      link.download = `retrieval-evaluation-${stamp}.${isJson ? "json" : "md"}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     async function handleDocumentAction(event) {
@@ -1973,10 +2522,12 @@
     }
 
     function getSessionId() {
-      let sessionId = localStorage.getItem("rag_agent_session_id");
+      const userKey = state.currentUser?.id || "anonymous";
+      const storageKey = `rag_agent_session_id:${userKey}`;
+      let sessionId = localStorage.getItem(storageKey);
       if (!sessionId) {
         sessionId = crypto.randomUUID();
-        localStorage.setItem("rag_agent_session_id", sessionId);
+        localStorage.setItem(storageKey, sessionId);
       }
       state.agentSessionId = sessionId;
       return sessionId;
@@ -2012,8 +2563,10 @@
       const link = document.createElement("a");
       link.href = url;
       link.download = "简历岗位匹配报告.txt";
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(url);
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     function setLoading(button, isLoading, loadingText) {

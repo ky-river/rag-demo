@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import hashlib
 import json
 import logging
 import math
+import os
 import re
 import sqlite3
 import shutil
@@ -15,16 +16,18 @@ import time
 from collections import Counter
 from contextlib import closing
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from typing import Any, Literal, TypedDict
+from typing import Any, Iterator, Literal, TypedDict
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
@@ -34,6 +37,10 @@ from langgraph.graph import END, START, StateGraph
 from openai import APITimeoutError, OpenAI
 from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
+
+from app.auth import AuthError, AuthStore, User
+from app.evaluation import run_retrieval_evaluation
+from app.rate_limit import SlidingWindowRateLimiter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,30 +77,63 @@ DEFAULT_COLLECTION_NAME = "rag_demo"
 BUILD_COLLECTION_PREFIX = "rag_demo_build_"
 COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,61}[A-Za-z0-9]$")
 ACTIVE_COLLECTION_FILE = DB_DIR / "active_collection.txt"
+WORKSPACES_DATA_DIR = DATA_DIR / "users"
+WORKSPACES_INDEX_DIR = DB_DIR / "users"
 INDEX_REBUILD_LOCK = threading.Lock()
 UPLOAD_LOCK = asyncio.Lock()
+auth_store = AuthStore(SESSION_DB)
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def read_active_collection_name() -> str:
-    try:
-        name = ACTIVE_COLLECTION_FILE.read_text(encoding="utf-8").strip()
-    except (FileNotFoundError, OSError):
+def workspace_data_dir(owner_id: str | None) -> Path:
+    return WORKSPACES_DATA_DIR / owner_id if owner_id else DATA_DIR
+
+
+def workspace_collection_prefix(owner_id: str | None) -> str:
+    if not owner_id:
         return DEFAULT_COLLECTION_NAME
+    digest = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:12]
+    return f"rag_demo_{digest}"
+
+
+def active_collection_file(owner_id: str | None) -> Path:
+    if not owner_id:
+        return ACTIVE_COLLECTION_FILE
+    return WORKSPACES_INDEX_DIR / owner_id / "active_collection.txt"
+
+
+def read_active_collection_name(owner_id: str | None) -> str:
+    prefix = workspace_collection_prefix(owner_id)
+    try:
+        name = active_collection_file(owner_id).read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return prefix
     if (
         COLLECTION_NAME_PATTERN.fullmatch(name)
-        and (name == DEFAULT_COLLECTION_NAME or name.startswith(BUILD_COLLECTION_PREFIX))
+        and (
+            name == prefix
+            or name.startswith(f"{prefix}_build_")
+            or (
+                owner_id is None
+                and (
+                    name == DEFAULT_COLLECTION_NAME
+                    or name.startswith(BUILD_COLLECTION_PREFIX)
+                )
+            )
+        )
     ):
         return name
-    return DEFAULT_COLLECTION_NAME
+    return prefix
 
 
-def persist_active_collection_name(name: str) -> None:
-    ACTIVE_COLLECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = ACTIVE_COLLECTION_FILE.with_name(
-        f".{ACTIVE_COLLECTION_FILE.name}.{uuid4().hex}.tmp"
+def persist_active_collection_name(owner_id: str | None, name: str) -> None:
+    target = active_collection_file(owner_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(
+        f".{target.name}.{uuid4().hex}.tmp"
     )
     temp_path.write_text(name, encoding="utf-8")
-    os.replace(temp_path, ACTIVE_COLLECTION_FILE)
+    os.replace(temp_path, target)
 
 
 class BailianEmbeddings(Embeddings):
@@ -124,6 +164,11 @@ class QuestionRequest(BaseModel):
     question: str
 
 
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+
+
 class StudyPlanRequest(BaseModel):
     gaps: list[str]
 
@@ -137,7 +182,12 @@ class ClearSessionRequest(BaseModel):
     session_id: str
 
 
+class RetrievalEvaluationRequest(BaseModel):
+    suite: Literal["smoke", "extended"] = "smoke"
+
+
 class AgentGraphState(TypedDict, total=False):
+    owner_id: str | None
     message: str
     intent: str
     tool: str
@@ -148,15 +198,15 @@ class AgentGraphState(TypedDict, total=False):
     sources: list[dict]
 
 
+@dataclass
+class WorkspaceIndex:
+    collection_name: str
+    vectorstore: Chroma
+    bm25_documents: list[Document]
+    bm25_index: BM25Okapi | None
+
+
 embeddings = BailianEmbeddings()
-active_collection_name = read_active_collection_name()
-vectorstore = Chroma(
-    collection_name=active_collection_name,
-    persist_directory=str(DB_DIR),
-    embedding_function=embeddings,
-)
-bm25_index: BM25Okapi | None = None
-bm25_documents: list[Document] = []
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     base_url=os.getenv("OPENAI_BASE_URL"),
@@ -165,6 +215,21 @@ client = OpenAI(
 )
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_FILENAME_LENGTH = 120
+PDF_SIGNATURE_READ_BYTES = 1024
+AUTH_RATE_LIMIT_PER_MINUTE = non_negative_int_from_env(
+    "AUTH_RATE_LIMIT_PER_MINUTE",
+    10,
+)
+MODEL_RATE_LIMIT_PER_MINUTE = non_negative_int_from_env(
+    "MODEL_RATE_LIMIT_PER_MINUTE",
+    30,
+)
+WRITE_RATE_LIMIT_PER_MINUTE = non_negative_int_from_env(
+    "WRITE_RATE_LIMIT_PER_MINUTE",
+    10,
+)
+RATE_LIMIT_WINDOW_SECONDS = 60
 RAG_TOP_K = 4
 RAG_CANDIDATE_K = 12
 RAG_RELEVANCE_THRESHOLD = 0.30
@@ -179,7 +244,7 @@ RERANK_MODEL = os.getenv(
     "BAAI/bge-reranker-v2-m3-int8",
 )
 RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "4"))
-APP_VERSION = os.getenv("APP_VERSION", "1.3")
+APP_VERSION = os.getenv("APP_VERSION", "1.5")
 RERANK_CACHE_DIR = Path(
     os.getenv("RERANK_CACHE_DIR", str(ROOT / ".cache" / "fastembed"))
 )
@@ -190,6 +255,19 @@ CHINESE_STOP_BIGRAMS = {
     "可以", "多少", "一个", "的是", "当前", "系统",
 }
 logger = logging.getLogger("rag_demo")
+workspace_indexes: dict[str | None, WorkspaceIndex] = {}
+rate_limiter = SlidingWindowRateLimiter()
+MODEL_RATE_LIMIT_PATHS = {
+    "/agent",
+    "/agent-graph",
+    "/agent-tools",
+    "/ask",
+    "/eval/retrieval",
+    "/match",
+    "/search",
+    "/study-plan",
+}
+AUTH_RATE_LIMIT_PATHS = {"/auth/login", "/auth/register"}
 reranker = None
 reranker_error: str | None = None
 
@@ -272,16 +350,31 @@ def init_session_db() -> None:
     with closing(sqlite3.connect(SESSION_DB)) as connection, connection:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS conversations ("
-            "session_id TEXT PRIMARY KEY, messages_json TEXT NOT NULL, "
+            "session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', "
+            "messages_json TEXT NOT NULL, "
             "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        if "user_id" not in columns:
+            connection.execute(
+                "ALTER TABLE conversations "
+                "ADD COLUMN user_id TEXT NOT NULL DEFAULT ''"
+            )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conversations_user "
+            "ON conversations(user_id)"
         )
 
 
-def load_history(session_id: str) -> list[dict[str, str]]:
+def load_history(session_id: str, user_id: str) -> list[dict[str, str]]:
     with closing(sqlite3.connect(SESSION_DB)) as connection:
         row = connection.execute(
-            "SELECT messages_json FROM conversations WHERE session_id = ?",
-            (session_id,),
+            "SELECT messages_json FROM conversations "
+            "WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
         ).fetchone()
     if not row:
         return []
@@ -292,19 +385,81 @@ def load_history(session_id: str) -> list[dict[str, str]]:
         return []
 
 
-def save_history(session_id: str, history: list[dict[str, str]]) -> None:
+def save_history(
+    session_id: str,
+    history: list[dict[str, str]],
+    user_id: str,
+) -> None:
     with closing(sqlite3.connect(SESSION_DB)) as connection, connection:
+        existing = connection.execute(
+            "SELECT user_id FROM conversations WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if existing and existing[0] != user_id:
+            raise PermissionError("无权使用该会话")
         connection.execute(
-            "INSERT INTO conversations(session_id, messages_json) VALUES (?, ?) "
+            "INSERT INTO conversations(session_id, user_id, messages_json) "
+            "VALUES (?, ?, ?) "
             "ON CONFLICT(session_id) DO UPDATE SET "
             "messages_json = excluded.messages_json, updated_at = CURRENT_TIMESTAMP",
-            (session_id, json.dumps(history[-10:], ensure_ascii=False)),
+            (
+                session_id,
+                user_id,
+                json.dumps(history[-10:], ensure_ascii=False),
+            ),
         )
 
 
-def clear_history(session_id: str) -> None:
+def clear_history(session_id: str, user_id: str) -> None:
     with closing(sqlite3.connect(SESSION_DB)) as connection, connection:
-        connection.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
+        connection.execute(
+            "DELETE FROM conversations WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+
+
+def bearer_token_from_request(request: Request) -> str | None:
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+def rate_limit_policy(method: str, path: str) -> tuple[str, int] | None:
+    normalized_path = path.rstrip("/") or "/"
+    if normalized_path in AUTH_RATE_LIMIT_PATHS:
+        return "auth", AUTH_RATE_LIMIT_PER_MINUTE
+    if normalized_path in MODEL_RATE_LIMIT_PATHS:
+        return "model", MODEL_RATE_LIMIT_PER_MINUTE
+    if (
+        normalized_path == "/upload"
+        or (method == "DELETE" and normalized_path.startswith("/documents/"))
+    ):
+        return "write", WRITE_RATE_LIMIT_PER_MINUTE
+    return None
+
+
+def require_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> User:
+    user = getattr(request.state, "authenticated_user", None)
+    if user is not None:
+        return user
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="请先登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = auth_store.authenticate(credentials.credentials)
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="登录状态已过期，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
 configure_logging()
@@ -320,6 +475,40 @@ app.add_middleware(
 )
 
 
+def auth_payload(user: User, token: str) -> dict:
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"id": user.id, "email": user.email},
+    }
+
+
+@app.post("/auth/register")
+def register(request: AuthRequest):
+    user, token = auth_store.register(request.email, request.password)
+    return auth_payload(user, token)
+
+
+@app.post("/auth/login")
+def login(request: AuthRequest):
+    user, token = auth_store.login(request.email, request.password)
+    return auth_payload(user, token)
+
+
+@app.get("/auth/me")
+def auth_me(user: User = Depends(require_user)):
+    return {"user": {"id": user.id, "email": user.email}}
+
+
+@app.post("/auth/logout")
+def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    if credentials is not None:
+        auth_store.revoke(credentials.credentials)
+    return {"message": "已退出登录"}
+
+
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     supplied_request_id = request.headers.get("X-Request-ID", "")
@@ -331,8 +520,50 @@ async def request_logging_middleware(request: Request, call_next):
     request.state.request_id = request_id
     token = request_id_context.set(request_id)
     started_at = time.perf_counter()
+    rate_limit_result = None
     try:
-        response = await call_next(request)
+        policy = rate_limit_policy(request.method, request.url.path)
+        if policy is not None:
+            category, limit = policy
+            subject = request.client.host if request.client else "unknown"
+            if category != "auth":
+                bearer_token = bearer_token_from_request(request)
+                user = (
+                    auth_store.authenticate(bearer_token)
+                    if bearer_token
+                    else None
+                )
+                if user is not None:
+                    request.state.authenticated_user = user
+                    subject = user.id
+
+            rate_limit_result = rate_limiter.check(
+                key=f"{category}:{subject}",
+                limit=limit,
+                window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+            )
+            if not rate_limit_result.allowed:
+                response = JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "请求过于频繁，请稍后重试",
+                        "retry_after_seconds": rate_limit_result.retry_after_seconds,
+                        "request_id": request_id,
+                    },
+                    headers={
+                        "Retry-After": str(
+                            rate_limit_result.retry_after_seconds
+                        ),
+                        "X-RateLimit-Remaining": "0",
+                    },
+                )
+            else:
+                response = await call_next(request)
+                response.headers["X-RateLimit-Remaining"] = str(
+                    rate_limit_result.remaining
+                )
+        else:
+            response = await call_next(request)
     except Exception as exc:
         logger.error(
             "request_failed",
@@ -350,6 +581,12 @@ async def request_logging_middleware(request: Request, call_next):
     else:
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()"
+        )
         logger.info(
             "request_completed",
             extra={
@@ -364,6 +601,31 @@ async def request_logging_middleware(request: Request, call_next):
         return response
     finally:
         request_id_context.reset(token)
+
+
+@app.exception_handler(AuthError)
+async def auth_error_handler(request: Request, exc: AuthError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.message,
+            "request_id": getattr(request.state, "request_id", current_request_id()),
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_error_handler(request: Request, exc: HTTPException):
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": str(exc.detail),
+            "request_id": getattr(request.state, "request_id", current_request_id()),
+        },
+    )
+    for key, value in exc.headers.items():
+        response.headers[key] = value
+    return response
 
 
 @app.exception_handler(APITimeoutError)
@@ -399,8 +661,8 @@ def tokenize_for_bm25(text: str) -> list[str]:
     return tokens
 
 
-def load_documents_from_store() -> list[Document]:
-    stored = vectorstore.get(include=["documents", "metadatas"])
+def load_documents_from_store(store: Chroma) -> list[Document]:
+    stored = store.get(include=["documents", "metadatas"])
     return [
         Document(page_content=content, metadata=metadata or {})
         for content, metadata in zip(
@@ -419,10 +681,12 @@ def build_bm25_index(documents: list[Document]) -> BM25Okapi | None:
     return BM25Okapi(tokenized_documents) if tokenized_documents else None
 
 
-def indexed_pdf_files() -> list[Path]:
+def indexed_pdf_files(owner_id: str | None) -> list[Path]:
+    data_dir = workspace_data_dir(owner_id)
+    data_dir.mkdir(parents=True, exist_ok=True)
     return [
         path
-        for path in sorted(DATA_DIR.iterdir())
+        for path in sorted(data_dir.iterdir())
         if (
             path.is_file()
             and not path.name.startswith(".")
@@ -431,102 +695,13 @@ def indexed_pdf_files() -> list[Path]:
     ]
 
 
-def refresh_bm25_index(documents: list[Document] | None = None) -> None:
-    global bm25_documents, bm25_index
-
-    bm25_documents = documents if documents is not None else load_documents_from_store()
-    bm25_index = build_bm25_index(bm25_documents)
-
-
-def build_index() -> int:
-    """Build a staging index and switch to it only after validation succeeds."""
-    global active_collection_name, bm25_documents, bm25_index, vectorstore
-
-    with INDEX_REBUILD_LOCK:
-        documents = []
-        for pdf_path in indexed_pdf_files():
-            pdf_documents = PyPDFLoader(str(pdf_path)).load()
-            for document in pdf_documents:
-                document.metadata["filename"] = pdf_path.name
-            documents.extend(pdf_documents)
-
-        chunks = splitter.split_documents(documents)
-        chunks = [
-            chunk for chunk in chunks
-            if chunk.page_content and chunk.page_content.strip()
-        ]
-        if not chunks:
-            raise ValueError("没有可用于建立索引的文本片段")
-
-        old_collection_name = active_collection_name
-        old_vectorstore = vectorstore
-        new_collection_name = (
-            f"{BUILD_COLLECTION_PREFIX}{int(time.time())}_{uuid4().hex[:8]}"
-        )
-        staging_vectorstore = None
-
-        try:
-            staging_vectorstore = Chroma(
-                collection_name=new_collection_name,
-                persist_directory=str(DB_DIR),
-                embedding_function=embeddings,
-            )
-            staging_vectorstore.add_documents(chunks)
-            staged_count = staging_vectorstore._collection.count()
-            if staged_count != len(chunks):
-                raise RuntimeError(
-                    f"索引校验失败：预期 {len(chunks)} 个片段，实际 {staged_count} 个"
-                )
-            new_bm25_index = build_bm25_index(chunks)
-            persist_active_collection_name(new_collection_name)
-        except Exception:
-            if staging_vectorstore is not None:
-                try:
-                    staging_vectorstore.delete_collection()
-                except Exception as cleanup_error:
-                    logger.warning(
-                        "清理失败索引集合时出错：%s",
-                        cleanup_error,
-                        extra={
-                            "event": "index_cleanup_failed",
-                            "collection": new_collection_name,
-                        },
-                    )
-            raise
-
-        vectorstore = staging_vectorstore
-        active_collection_name = new_collection_name
-        bm25_documents = chunks
-        bm25_index = new_bm25_index
-
-        if old_collection_name != new_collection_name:
-            try:
-                old_vectorstore.delete_collection()
-            except Exception as cleanup_error:
-                logger.warning(
-                    "删除旧索引集合时出错：%s",
-                    cleanup_error,
-                    extra={
-                        "event": "old_index_cleanup_failed",
-                        "collection": old_collection_name,
-                    },
-                )
-
-        logger.info(
-            "index_rebuild_completed",
-            extra={
-                "event": "index_rebuild_completed",
-                "collection": new_collection_name,
-                "previous_collection": old_collection_name,
-                "chunk_count": len(chunks),
-            },
-        )
-        return len(chunks)
-
-
-def cleanup_stale_build_collections() -> None:
+def cleanup_stale_build_collections(
+    owner_id: str | None,
+    workspace: WorkspaceIndex,
+) -> None:
+    build_prefix = f"{workspace_collection_prefix(owner_id)}_build_"
     try:
-        collections = vectorstore._client.list_collections()
+        collections = workspace.vectorstore._client.list_collections()
     except Exception as exc:
         logger.warning(
             "读取索引集合列表失败：%s",
@@ -537,12 +712,12 @@ def cleanup_stale_build_collections() -> None:
 
     for collection in collections:
         name = getattr(collection, "name", "")
-        if not name.startswith(BUILD_COLLECTION_PREFIX):
+        if not name.startswith(build_prefix):
             continue
-        if name == active_collection_name:
+        if name == workspace.collection_name:
             continue
         try:
-            vectorstore._client.delete_collection(name)
+            workspace.vectorstore._client.delete_collection(name)
             logger.info(
                 "stale_index_collection_removed",
                 extra={
@@ -561,8 +736,118 @@ def cleanup_stale_build_collections() -> None:
             )
 
 
-cleanup_stale_build_collections()
-refresh_bm25_index()
+def get_workspace_index_locked(owner_id: str | None) -> WorkspaceIndex:
+    workspace = workspace_indexes.get(owner_id)
+    if workspace is not None:
+        return workspace
+
+    collection_name = read_active_collection_name(owner_id)
+    vectorstore = Chroma(
+        collection_name=collection_name,
+        persist_directory=str(DB_DIR),
+        embedding_function=embeddings,
+    )
+    documents = load_documents_from_store(vectorstore)
+    workspace = WorkspaceIndex(
+        collection_name=collection_name,
+        vectorstore=vectorstore,
+        bm25_documents=documents,
+        bm25_index=build_bm25_index(documents),
+    )
+    cleanup_stale_build_collections(owner_id, workspace)
+    workspace_indexes[owner_id] = workspace
+    return workspace
+
+
+def build_index(owner_id: str | None) -> int:
+    """Build a staging index and switch to it only after validation succeeds."""
+    with INDEX_REBUILD_LOCK:
+        old_workspace = get_workspace_index_locked(owner_id)
+        documents = []
+        for pdf_path in indexed_pdf_files(owner_id):
+            pdf_documents = PyPDFLoader(str(pdf_path)).load()
+            for document in pdf_documents:
+                document.metadata["filename"] = pdf_path.name
+                if owner_id:
+                    document.metadata["owner_id"] = owner_id
+            documents.extend(pdf_documents)
+
+        chunks = splitter.split_documents(documents)
+        chunks = [
+            chunk for chunk in chunks
+            if chunk.page_content and chunk.page_content.strip()
+        ]
+        if not chunks:
+            raise ValueError("没有可用于建立索引的文本片段")
+
+        old_collection_name = old_workspace.collection_name
+        old_vectorstore = old_workspace.vectorstore
+        collection_prefix = workspace_collection_prefix(owner_id)
+        new_collection_name = (
+            f"{collection_prefix}_build_{int(time.time())}_{uuid4().hex[:8]}"
+        )
+        staging_vectorstore = None
+
+        try:
+            staging_vectorstore = Chroma(
+                collection_name=new_collection_name,
+                persist_directory=str(DB_DIR),
+                embedding_function=embeddings,
+            )
+            staging_vectorstore.add_documents(chunks)
+            staged_count = staging_vectorstore._collection.count()
+            if staged_count != len(chunks):
+                raise RuntimeError(
+                    f"索引校验失败：预期 {len(chunks)} 个片段，实际 {staged_count} 个"
+                )
+            new_bm25_index = build_bm25_index(chunks)
+            persist_active_collection_name(owner_id, new_collection_name)
+        except Exception:
+            if staging_vectorstore is not None:
+                try:
+                    staging_vectorstore.delete_collection()
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "清理失败索引集合时出错：%s",
+                        cleanup_error,
+                        extra={
+                            "event": "index_cleanup_failed",
+                            "collection": new_collection_name,
+                        },
+                    )
+            raise
+
+        workspace_indexes[owner_id] = WorkspaceIndex(
+            collection_name=new_collection_name,
+            vectorstore=staging_vectorstore,
+            bm25_documents=chunks,
+            bm25_index=new_bm25_index,
+        )
+
+        if old_collection_name != new_collection_name:
+            try:
+                old_vectorstore.delete_collection()
+            except Exception as cleanup_error:
+                logger.warning(
+                    "删除旧索引集合时出错：%s",
+                    cleanup_error,
+                    extra={
+                        "event": "old_index_cleanup_failed",
+                        "collection": old_collection_name,
+                    },
+                )
+
+        logger.info(
+            "index_rebuild_completed",
+            extra={
+                "event": "index_rebuild_completed",
+                "owner_id": owner_id,
+                "collection": new_collection_name,
+                "previous_collection": old_collection_name,
+                "chunk_count": len(chunks),
+            },
+        )
+        return len(chunks)
 
 
 def get_reranker():
@@ -633,27 +918,28 @@ def reranking_status() -> dict:
     }
 
 
-def health_status() -> dict:
-    chunk_count = len(bm25_documents)
+def health_status(owner_id: str | None) -> dict:
+    with INDEX_REBUILD_LOCK:
+        workspace = get_workspace_index_locked(owner_id)
+    chunk_count = len(workspace.bm25_documents)
     document_count = len(
         {
             document.metadata.get("filename")
-            for document in bm25_documents
+            for document in workspace.bm25_documents
             if document.metadata.get("filename")
         }
     )
     collection_error = None
     try:
-        collection_count = vectorstore._collection.count()
+        collection_count = workspace.vectorstore._collection.count()
     except Exception as exc:
         collection_count = None
         collection_error = str(exc)
 
     index_ready = (
         collection_error is None
-        and chunk_count > 0
-        and bm25_index is not None
         and collection_count == chunk_count
+        and (chunk_count == 0 or workspace.bm25_index is not None)
     )
     if collection_error:
         status = "error"
@@ -666,7 +952,7 @@ def health_status() -> dict:
         "status": status,
         "version": APP_VERSION,
         "index_ready": index_ready,
-        "collection_name": active_collection_name,
+        "collection_name": workspace.collection_name,
         "document_count": document_count,
         "chunk_count": chunk_count,
         "collection_count": collection_count,
@@ -679,14 +965,17 @@ def health_status() -> dict:
     }
 
 
-def build_document_inventory() -> list[dict[str, Any]]:
+def build_document_inventory(
+    owner_id: str | None,
+    workspace: WorkspaceIndex,
+) -> list[dict[str, Any]]:
     chunk_counts = Counter(
         str(document.metadata.get("filename"))
-        for document in bm25_documents
+        for document in workspace.bm25_documents
         if document.metadata.get("filename")
     )
     inventory = []
-    for pdf_path in indexed_pdf_files():
+    for pdf_path in indexed_pdf_files(owner_id):
         stat = pdf_path.stat()
         inventory.append(
             {
@@ -709,7 +998,16 @@ def home():
 
 @app.get("/health")
 def health():
-    result = health_status()
+    result = health_status(None)
+    return JSONResponse(
+        status_code=200 if result["index_ready"] else 503,
+        content=result,
+    )
+
+
+@app.get("/workspace/health")
+def workspace_health(user: User = Depends(require_user)):
+    result = health_status(user.id)
     return JSONResponse(
         status_code=200 if result["index_ready"] else 503,
         content=result,
@@ -717,12 +1015,13 @@ def health():
 
 
 @app.get("/documents")
-async def list_documents():
+async def list_documents(user: User = Depends(require_user)):
     async with UPLOAD_LOCK:
         with INDEX_REBUILD_LOCK:
-            documents = build_document_inventory()
-            collection = active_collection_name
-            chunk_count = len(bm25_documents)
+            workspace = get_workspace_index_locked(user.id)
+            documents = build_document_inventory(user.id, workspace)
+            collection = workspace.collection_name
+            chunk_count = len(workspace.bm25_documents)
     return {
         "documents": documents,
         "document_count": len(documents),
@@ -739,8 +1038,9 @@ def document_key(document: Document) -> tuple:
     )
 
 
-def _retrieve_knowledge_locked(question: str):
-    raw_vector_results = vectorstore.similarity_search_with_score(
+def _retrieve_knowledge_locked(question: str, owner_id: str | None):
+    workspace = get_workspace_index_locked(owner_id)
+    raw_vector_results = workspace.vectorstore.similarity_search_with_score(
         question,
         k=RAG_CANDIDATE_K,
     )
@@ -765,12 +1065,12 @@ def _retrieve_knowledge_locked(question: str):
             )
 
     lexical_scores = {}
-    if bm25_index is not None:
+    if workspace.bm25_index is not None:
         query_tokens = tokenize_for_bm25(question)
         if query_tokens:
-            scores = bm25_index.get_scores(query_tokens)
+            scores = workspace.bm25_index.get_scores(query_tokens)
             lexical_order = sorted(
-                range(len(bm25_documents)),
+                range(len(workspace.bm25_documents)),
                 key=lambda index: scores[index],
                 reverse=True,
             )
@@ -778,7 +1078,7 @@ def _retrieve_knowledge_locked(question: str):
                 score = float(scores[index])
                 if score <= 0:
                     break
-                document = bm25_documents[index]
+                document = workspace.bm25_documents[index]
                 lexical_scores[document_key(document)] = (document, score, rank)
 
     candidate_keys = set(vector_by_key) | set(lexical_scores)
@@ -849,9 +1149,9 @@ def _retrieve_knowledge_locked(question: str):
     return docs, sources
 
 
-def retrieve_knowledge(question: str):
+def retrieve_knowledge(question: str, owner_id: str | None):
     with INDEX_REBUILD_LOCK:
-        return _retrieve_knowledge_locked(question)
+        return _retrieve_knowledge_locked(question, owner_id)
 
 
 def format_retrieval_context(item: dict) -> str:
@@ -871,8 +1171,12 @@ def format_retrieval_context(item: dict) -> str:
     )
 
 
-def answer_from_knowledge_base(question: str, history=None):
-    docs, sources = retrieve_knowledge(question)
+def answer_from_knowledge_base(
+    question: str,
+    history=None,
+    owner_id: str | None = None,
+):
+    docs, sources = retrieve_knowledge(question, owner_id)
     if not docs:
         return {
             "answer": "当前资料中没有找到答案",
@@ -1047,9 +1351,18 @@ def run_study_plan_text(topic: str, history=None) -> str:
     return response.choices[0].message.content or ""
 
 
-def execute_agent_tool(name: str, arguments: dict, history=None) -> dict:
+def execute_agent_tool(
+    name: str,
+    arguments: dict,
+    history=None,
+    owner_id: str | None = None,
+) -> dict:
     if name == "knowledge_search":
-        return answer_from_knowledge_base(arguments["question"], history)
+        return answer_from_knowledge_base(
+            arguments["question"],
+            history,
+            owner_id=owner_id,
+        )
     if name == "create_study_plan":
         return {"answer": run_study_plan_text(arguments["topic"], history), "sources": []}
     if name == "resume_match_guidance":
@@ -1078,6 +1391,7 @@ def graph_knowledge(state: AgentGraphState) -> AgentGraphState:
         "knowledge_search",
         state.get("tool_arguments", {"question": state["message"]}),
         state.get("history", []),
+        state.get("owner_id"),
     )
     return {"answer": result["answer"], "sources": result["sources"]}
 
@@ -1087,6 +1401,7 @@ def graph_study_plan(state: AgentGraphState) -> AgentGraphState:
         "create_study_plan",
         state.get("tool_arguments", {"topic": state["message"]}),
         state.get("history", []),
+        state.get("owner_id"),
     )
     return {"answer": result["answer"], "sources": result["sources"]}
 
@@ -1096,6 +1411,7 @@ def graph_resume_match(state: AgentGraphState) -> AgentGraphState:
         "resume_match_guidance",
         state.get("tool_arguments", {}),
         state.get("history", []),
+        state.get("owner_id"),
     )
     return {"answer": result["answer"], "sources": result["sources"]}
 
@@ -1125,15 +1441,16 @@ agent_graph_builder.add_edge("resume", END)
 agent_graph = agent_graph_builder.compile()
 
 
-def run_agent_graph(request: AgentRequest):
+def run_agent_graph(request: AgentRequest, owner_id: str):
     message = request.message.strip()
     if not message:
         return {"error": "请输入任务"}
 
     session_id = request.session_id or str(uuid4())
-    history = load_history(session_id)[-10:]
+    history = load_history(session_id, owner_id)[-10:]
     graph_history = history.copy()
     result = agent_graph.invoke({
+        "owner_id": owner_id,
         "message": message,
         "history": graph_history,
     })
@@ -1142,7 +1459,10 @@ def run_agent_graph(request: AgentRequest):
         {"role": "user", "content": message},
         {"role": "assistant", "content": answer},
     ])
-    save_history(session_id, history)
+    try:
+        save_history(session_id, history, owner_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {
         "session_id": session_id,
         "intent": result.get("intent"),
@@ -1154,24 +1474,33 @@ def run_agent_graph(request: AgentRequest):
 
 
 @app.post("/agent-graph")
-def agent_graph_endpoint(request: AgentRequest):
-    return run_agent_graph(request)
+def agent_graph_endpoint(
+    request: AgentRequest,
+    user: User = Depends(require_user),
+):
+    return run_agent_graph(request, user.id)
 
 
 @app.post("/agent-tools", deprecated=True)
-def agent_tools(request: AgentRequest):
+def agent_tools(
+    request: AgentRequest,
+    user: User = Depends(require_user),
+):
     """Compatibility alias for clients using the previous endpoint."""
-    return run_agent_graph(request)
+    return run_agent_graph(request, user.id)
 
 
 @app.post("/agent", deprecated=True)
-def agent(request: AgentRequest):
+def agent(
+    request: AgentRequest,
+    user: User = Depends(require_user),
+):
     message = request.message.strip()
     if not message:
         return {"error": "请输入任务"}
 
     session_id = request.session_id or str(uuid4())
-    history = load_history(session_id)[-10:]
+    history = load_history(session_id, user.id)[-10:]
     intent = detect_intent(message)
     if intent == "resume_match":
         reply = "简历与岗位匹配需要两个 PDF 文件，请使用下方的简历和岗位 JD 上传区域。"
@@ -1179,7 +1508,7 @@ def agent(request: AgentRequest):
             {"role": "user", "content": message},
             {"role": "assistant", "content": reply},
         ])
-        save_history(session_id, history)
+        save_history(session_id, history, user.id)
         return {
             "session_id": session_id,
             "intent": intent,
@@ -1205,32 +1534,54 @@ def agent(request: AgentRequest):
             {"role": "user", "content": message},
             {"role": "assistant", "content": answer},
         ])
-        save_history(session_id, history)
+        save_history(session_id, history, user.id)
         return {"session_id": session_id, "intent": intent, "answer": answer, "sources": []}
 
-    result = answer_from_knowledge_base(message, history)
+    result = answer_from_knowledge_base(message, history, owner_id=user.id)
     history.extend([
         {"role": "user", "content": message},
         {"role": "assistant", "content": result["answer"]},
     ])
-    save_history(session_id, history)
+    save_history(session_id, history, user.id)
     return {"session_id": session_id, "intent": intent, **result}
 
 
 @app.post("/agent/clear")
-def clear_agent_session(request: ClearSessionRequest):
-    clear_history(request.session_id)
+def clear_agent_session(
+    request: ClearSessionRequest,
+    user: User = Depends(require_user),
+):
+    clear_history(request.session_id, user.id)
     return {"message": "会话已清空", "session_id": request.session_id}
+
+
+def validate_pdf_filename(filename: str) -> None:
+    if not filename.lower().endswith(".pdf"):
+        raise ValueError("只支持 PDF 文件")
+    if len(filename) > MAX_FILENAME_LENGTH:
+        raise ValueError(f"PDF 文件名不能超过 {MAX_FILENAME_LENGTH} 个字符")
+    if any(ord(character) < 32 for character in filename):
+        raise ValueError("PDF 文件名包含非法字符")
+
+
+def has_pdf_signature(path: Path) -> bool:
+    with path.open("rb") as buffer:
+        header = buffer.read(PDF_SIGNATURE_READ_BYTES)
+    return b"%PDF-" in header
 
 
 def read_uploaded_pdf(upload: UploadFile, temp_dir: Path) -> str:
     filename = Path(upload.filename or "").name
-    if not filename.lower().endswith(".pdf"):
-        raise ValueError("简历和岗位 JD 都必须是 PDF 文件")
+    try:
+        validate_pdf_filename(filename)
+    except ValueError as exc:
+        raise ValueError("简历和岗位 JD 都必须是 PDF 文件") from exc
 
     pdf_path = temp_dir / filename
     with pdf_path.open("wb") as buffer:
         shutil.copyfileobj(upload.file, buffer)
+    if not has_pdf_signature(pdf_path):
+        raise ValueError("文件内容不是有效的 PDF")
 
     documents = PyPDFLoader(str(pdf_path)).load()
     return "\n\n".join(
@@ -1244,6 +1595,7 @@ def read_uploaded_pdf(upload: UploadFile, temp_dir: Path) -> str:
 async def match_resume(
     resume: UploadFile = File(...),
     job_description: UploadFile = File(...),
+    user: User = Depends(require_user),
 ):
     with tempfile.TemporaryDirectory(prefix="rag_match_") as temp_path:
         temp_dir = Path(temp_path)
@@ -1300,7 +1652,10 @@ match_score 是 0 到 100 的整数；其他字段都是中文字符串数组。
 
 
 @app.post("/study-plan")
-def study_plan(request: StudyPlanRequest):
+def study_plan(
+    request: StudyPlanRequest,
+    user: User = Depends(require_user),
+):
     gaps = [gap.strip() for gap in request.gaps if gap.strip()]
     if not gaps:
         return {"error": "没有可用于制定计划的技能缺口"}
@@ -1326,15 +1681,22 @@ def study_plan(request: StudyPlanRequest):
 
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    user: User = Depends(require_user),
+):
     filename = Path(file.filename or "").name
-    if not filename.lower().endswith(".pdf"):
-        return {"error": "只支持 PDF 文件"}
+    try:
+        validate_pdf_filename(filename)
+    except ValueError as exc:
+        return {"error": str(exc)}
 
-    pdf_path = DATA_DIR / filename
+    data_dir = workspace_data_dir(user.id)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = data_dir / filename
     upload_token = uuid4().hex
-    temp_pdf_path = DATA_DIR / f".upload_{upload_token}.pdf"
-    backup_pdf_path = DATA_DIR / f".backup_{upload_token}.pdf"
+    temp_pdf_path = data_dir / f".upload_{upload_token}.pdf"
+    backup_pdf_path = data_dir / f".backup_{upload_token}.pdf"
     total_bytes = 0
 
     async with UPLOAD_LOCK:
@@ -1350,6 +1712,9 @@ async def upload_pdf(file: UploadFile = File(...)):
             if total_bytes == 0:
                 temp_pdf_path.unlink(missing_ok=True)
                 return {"error": "不能上传空文件"}
+            if not has_pdf_signature(temp_pdf_path):
+                temp_pdf_path.unlink(missing_ok=True)
+                return {"error": "文件内容不是有效的 PDF"}
 
             documents = PyPDFLoader(str(temp_pdf_path)).load()
             has_text = any(
@@ -1375,7 +1740,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             return {"error": "PDF 文件写入磁盘失败"}
 
         try:
-            chunk_count = await run_in_threadpool(build_index)
+            chunk_count = await run_in_threadpool(build_index, user.id)
         except Exception as exc:
             pdf_path.unlink(missing_ok=True)
             if had_previous_file and backup_pdf_path.exists():
@@ -1383,27 +1748,35 @@ async def upload_pdf(file: UploadFile = File(...)):
             return {"error": f"PDF 入库失败，已保留原索引：{exc}"}
 
         backup_pdf_path.unlink(missing_ok=True)
+        with INDEX_REBUILD_LOCK:
+            collection = get_workspace_index_locked(user.id).collection_name
         return {
             "message": f"PDF 上传并入库成功，共新增 {chunk_count} 个文本片段",
             "filename": filename,
             "chunks": chunk_count,
-            "collection": active_collection_name,
+            "collection": collection,
         }
 
 
 @app.delete("/documents/{filename}")
-async def delete_document(filename: str):
+async def delete_document(
+    filename: str,
+    user: User = Depends(require_user),
+):
     safe_filename = Path(filename).name
     if (
         safe_filename != filename
         or not safe_filename
+        or len(safe_filename) > MAX_FILENAME_LENGTH
         or not safe_filename.lower().endswith(".pdf")
     ):
         return {"error": "文档名称不合法"}
 
-    pdf_path = DATA_DIR / safe_filename
+    data_dir = workspace_data_dir(user.id)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = data_dir / safe_filename
     delete_token = uuid4().hex
-    backup_pdf_path = DATA_DIR / f".deleted_{delete_token}.pdf"
+    backup_pdf_path = data_dir / f".deleted_{delete_token}.pdf"
 
     async with UPLOAD_LOCK:
         if not pdf_path.is_file():
@@ -1415,7 +1788,7 @@ async def delete_document(filename: str):
             return {"error": "无法移动待删除的 PDF 文件"}
 
         try:
-            chunk_count = await run_in_threadpool(build_index)
+            chunk_count = await run_in_threadpool(build_index, user.id)
         except Exception as exc:
             try:
                 os.replace(backup_pdf_path, pdf_path)
@@ -1428,9 +1801,11 @@ async def delete_document(filename: str):
                         "filename": safe_filename,
                     },
                 )
+            with INDEX_REBUILD_LOCK:
+                collection = get_workspace_index_locked(user.id).collection_name
             return {
                 "error": f"删除后索引重建失败，已保留原索引：{exc}",
-                "collection": active_collection_name,
+                "collection": collection,
             }
 
         try:
@@ -1445,30 +1820,41 @@ async def delete_document(filename: str):
                 },
             )
 
+        with INDEX_REBUILD_LOCK:
+            collection = get_workspace_index_locked(user.id).collection_name
         return {
             "message": f"文档已删除并重建索引，当前共 {chunk_count} 个文本片段",
             "filename": safe_filename,
             "chunks": chunk_count,
-            "collection": active_collection_name,
+            "collection": collection,
         }
 
 
 @app.post("/ask")
-def ask(request: QuestionRequest):
+def ask(
+    request: QuestionRequest,
+    user: User = Depends(require_user),
+):
     question = request.question.strip()
     if not question:
         return {"error": "问题不能为空"}
-    return {"question": question, **answer_from_knowledge_base(question)}
+    return {
+        "question": question,
+        **answer_from_knowledge_base(question, owner_id=user.id),
+    }
 
 
 @app.post("/search")
-def search(request: QuestionRequest):
+def search(
+    request: QuestionRequest,
+    user: User = Depends(require_user),
+):
     question = request.question.strip()
     if not question:
         return {"error": "问题不能为空"}
 
     started_at = time.perf_counter()
-    _, sources = retrieve_knowledge(question)
+    _, sources = retrieve_knowledge(question, user.id)
     latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
     reranking = reranking_status()
     return {
@@ -1485,3 +1871,17 @@ def search(request: QuestionRequest):
         "latency_ms": latency_ms,
         "sources": sources,
     }
+
+
+@app.post("/eval/retrieval")
+def evaluate_retrieval(
+    request: RetrievalEvaluationRequest,
+    user: User = Depends(require_user),
+):
+    try:
+        return run_retrieval_evaluation(
+            request.suite,
+            lambda question: retrieve_knowledge(question, user.id)[1],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

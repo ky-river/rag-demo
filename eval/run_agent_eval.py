@@ -9,6 +9,7 @@ API_URL = (
     os.getenv("RAG_API_BASE_URL", "http://127.0.0.1:8000")
     + "/agent-graph"
 )
+API_TOKEN = os.getenv("RAG_API_TOKEN", "").strip()
 
 cases = json.loads(file.read_text(encoding="utf-8"))
 passed = 0
@@ -16,10 +17,13 @@ passed = 0
 for i, case in enumerate(cases, 1):
     body = json.dumps({"message": case["message"]}).encode("utf-8")
 
+    headers = {"Content-Type": "application/json"}
+    if API_TOKEN:
+        headers["Authorization"] = f"Bearer {API_TOKEN}"
     request = urllib.request.Request(
         API_URL,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
 

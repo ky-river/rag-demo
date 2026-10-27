@@ -4,6 +4,11 @@ import urllib.request
 
 
 BASE_URL = os.getenv("RAG_API_BASE_URL", "http://127.0.0.1:8000")
+API_TOKEN = os.getenv("RAG_API_TOKEN", "").strip()
+
+
+def authorization_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
 
 
 def post_json(path, payload):
@@ -11,7 +16,10 @@ def post_json(path, payload):
     request = urllib.request.Request(
         BASE_URL + path,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            **authorization_headers(),
+        },
         method="POST",
     )
     with urllib.request.urlopen(request) as response:
@@ -28,7 +36,10 @@ def post_file(path, filename, content):
     request = urllib.request.Request(
         BASE_URL + path,
         data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **authorization_headers(),
+        },
         method="POST",
     )
     with urllib.request.urlopen(request) as response:
